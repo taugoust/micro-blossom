@@ -53,7 +53,7 @@ when I run `openocd -c 'set VEXRISCV_YAML ../VexRiscv/cpu0.yaml' -f tcl/target/v
 
 **Update**: OpenOCD uses GDB instead of LLDB, but GDB does not support apple silicon, only x86. Thus, it is impossible to
 interactively debug the CPU with M1 Macs. However, the verilator and VexRiscV/SpinalHDL runs on M1 Macs without a problem.
-We can debug the design on a x86 Linux machine and do other staffs on Macs.
+We can debug the design on a x86 Linux machine and do other stuff on Macs.
 
 ```sh
 git clone git@github.com:SpinalHDL/openocd_riscv.git
@@ -289,7 +289,7 @@ sudo picocom /dev/ttyUSB1 -b 115200 --imap lfcrlf -g /home/ae/micro-blossom/src/
 ```
 
 We also need to set up access for the Digilent USB adaptor so that the new user can access the FPGA device via xsdb.
-This is a little bit trikky though, see [this post](https://blog.t123yh.xyz:2/index.php/archives/1013) for permitting multiple users to share the device:
+This is a little bit tricky though, see [this post](https://blog.t123yh.xyz:2/index.php/archives/1013) for permitting multiple users to share the device:
 
 ```sh
 sudo adduser $USER dialout  # add to the dialout group
