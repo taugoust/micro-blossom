@@ -270,7 +270,7 @@ VEXRISCV_REGRESSION_SEED=42 VEXRISCV_REGRESSION_LINUX_REGRESSION=no VEXRISCV_REG
 To prepare the package by removing all the irrelevant files:
 
 ```sh
-cd artifacts
+cd artifact
 make partial-clean
 # make sure the correct Vivado projects are included
 du -sh  # should be something close to 39G
