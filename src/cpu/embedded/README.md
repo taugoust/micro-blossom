@@ -53,7 +53,7 @@ make Xilinx  # build static library for both aarch64 and armv7r
 
 There are several projects in `src/fpga/Xilinx` folder, see `src/fpga/Xilinx/README.md` for more information.
 As an example, the following command will build the whole image of a simple application with 2GB LPDDR4 and 8KB BRAM on the PL
-side shared by both A72 and R5F in the Versal VMK180 evaluation borad.
+side shared by both A72 and R5F in the Versal VMK180 evaluation board.
 Note that the BRAM is configured to be dual port, so although A72 accesses it using `0xA400_0000` while R5F accesses it using
 `0x8000_0000`, they are essentially the same memory.
 
@@ -65,7 +65,7 @@ make -C ../../fpga/Xilinx/VMK180_BRAM
 # flash the image and run the program
 make -C ../../fpga/Xilinx/VMK180_BRAM run_r5
 make -C ../../fpga/Xilinx/VMK180_BRAM run_a72
-# if the hardware XSA is not changed, we can avoid reseting the whole system but only reload CPU program
+# if the hardware XSA is not changed, we can avoid resetting the whole system but only reload CPU program
 make -C ../../fpga/Xilinx/VMK180_BRAM run_r5_q
 make -C ../../fpga/Xilinx/VMK180_BRAM run_a72_q
 ```

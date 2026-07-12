@@ -4,7 +4,7 @@ A highly configurable hardware-accelerated Minimum-Weight Perfect Matching (MWPM
 
 Paper coming soon!!! Stay tuned!!!
 
-Micro Blossom is a heterogenous architecture that solves **exact** MWPM decoding problem in sub-microsecond latency by
+Micro Blossom is a heterogeneous architecture that solves **exact** MWPM decoding problem in sub-microsecond latency by
 taking advantage of vertex and edge-level fine-grained hardware acceleration.
 At the heart of Micro Blossom is an algorithm (equivalent to the original blossom algorithm) specifically optimized for resource-efficient RTL (register transfer level) implementation, with compact combinational logic and pipeline design.
 Given an arbitrary decoding graph, Micro Blossom automatically generates a hardware implementation (either Verilog or VHDL depending on your needs).
