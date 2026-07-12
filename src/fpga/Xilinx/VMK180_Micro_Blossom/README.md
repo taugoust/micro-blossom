@@ -1,6 +1,6 @@
 # VMK180 Micro Blossom
 
-Note: to customize the module and create a project out of it, use `/src/fpga/utils.build_micro_blossom.py`.
+Note: to customize the module and create a project out of it, use `/src/fpga/utils/build_micro_blossom.py`.
 
 ## Usage
 
