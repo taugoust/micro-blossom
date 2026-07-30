@@ -25,6 +25,20 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
+      mkVerilator_5_014 =
+        pkgs:
+        pkgs.verilator.overrideAttrs (_old: rec {
+          version = "5.014";
+          VERILATOR_SRC_VERSION = "v${version}";
+          src = pkgs.fetchFromGitHub {
+            owner = "verilator";
+            repo = "verilator";
+            tag = "v${version}";
+            hash = "sha256-cNNVE4JBQGTVNwd6uAjaP0QhsNSbBnZYjD2EAGwxnDw=";
+          };
+          patches = [ ];
+          doCheck = false;
+        });
       treefmtEval =
         system:
         treefmt-nix.lib.evalModule (import nixpkgs { inherit system; }) {
@@ -37,6 +51,7 @@
           settings.formatter.nixfmt.includes = [ "*.nix" ];
           settings.formatter.rustfmt.includes = nixpkgs.lib.mkForce [
             "src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs"
+            "src/cpu/blossom/src/util.rs"
             "src/cpu/embedded/build.rs"
             "src/qshell/**/*.rs"
           ];
@@ -49,6 +64,7 @@
           pkgs = import nixpkgs { inherit system; };
           lib = pkgs.lib;
           microblossomSbt = pkgs.sbt.override { jre = pkgs.jdk11; };
+          verilator_5_014 = mkVerilator_5_014 pkgs;
 
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
@@ -184,6 +200,22 @@
             };
           };
 
+          microblossomD3SimRunner = microblossomHost.overrideAttrs (old: {
+            pname = "microblossom-d3-sim-runner";
+            cargoBuildFlags = old.cargoBuildFlags ++ [
+              "--bin"
+              "embedded_simulator"
+            ];
+            EMBEDDED_BLOSSOM_MAIN = "test_micro_blossom";
+            EDGE_0_LEFT = "1";
+            EDGE_0_VIRTUAL = "2";
+            EDGE_0_WEIGHT = "2";
+            meta = old.meta // {
+              description = "Native runner for the canonical d3 MicroBlossom RTL smoke";
+              mainProgram = "embedded_simulator";
+            };
+          });
+
           d3Fixture =
             pkgs.runCommand "microblossom-code-capacity-repetition-d3-v1"
               {
@@ -303,8 +335,10 @@
           default = microblossomHost;
           microblossom-host = microblossomHost;
           microblossom-scala = microblossomScala;
+          microblossom-d3-sim-runner = microblossomD3SimRunner;
           microblossom-d3-graph = d3Fixture;
           microblossom-d3-rtl = d3Rtl;
+          verilator-5_014 = verilator_5_014;
         }
       );
 
@@ -312,8 +346,10 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          verilator_5_014 = mkVerilator_5_014 pkgs;
           fixture = self.packages.${system}.microblossom-d3-graph;
           scala = self.packages.${system}.microblossom-scala;
+          simRunner = self.packages.${system}.microblossom-d3-sim-runner;
           rtl = self.packages.${system}.microblossom-d3-rtl;
         in
         {
@@ -336,13 +372,41 @@
                 touch "$out"
               '';
 
+          d3-behavior-smoke =
+            pkgs.runCommand "microblossom-d3-behavior-smoke"
+              {
+                nativeBuildInputs = [
+                  simRunner
+                  pkgs.coreutils
+                  pkgs.gnumake
+                  pkgs.jdk11
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                fixture=${fixture}/share/microblossom/fixtures/code-capacity-repetition-d3-v1
+                export JAVA=${pkgs.jdk11}/bin/java
+                export MICROBLOSSOM_SCALA_JAR=${scala}/share/java/microblossom.jar
+                export MICROBLOSSOM_SIM_WORKDIR="$TMPDIR/work"
+                export MICROBLOSSOM_JAVA_HEAP=4G
+                mkdir -p "$MICROBLOSSOM_SIM_WORKDIR" "$out"
+
+                timeout 600 embedded_simulator "$fixture/graph.json" 2>&1 | \
+                  tee "$out/smoke.log"
+                grep -F 'Test MicroBlossom' "$out/smoke.log" >/dev/null
+                grep -F '9. Test Context Switching' "$out/smoke.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+                cp "$fixture/manifest.json" "$out/fixture-manifest.json"
+              '';
+
           rtl-contract =
             pkgs.runCommand "microblossom-d3-rtl-contract"
               {
                 nativeBuildInputs = [
                   pkgs.coreutils
                   pkgs.jq
-                  pkgs.verilator
+                  verilator_5_014
                 ];
               }
               ''
@@ -413,6 +477,7 @@
         let
           pkgs = import nixpkgs { inherit system; };
           microblossomSbt = pkgs.sbt.override { jre = pkgs.jdk11; };
+          verilator_5_014 = mkVerilator_5_014 pkgs;
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
             sha256 = rustManifestSha256;
@@ -426,6 +491,7 @@
               pkgs.jdk11
               pkgs.jq
               microblossomSbt
+              verilator_5_014
             ];
           };
         }

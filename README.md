@@ -70,13 +70,16 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-host`: native Rust primal decoder and deterministic graph tool, built with nightly `2023-11-16`;
 - `microblossom-scala`: offline-built Scala/SpinalHDL generator JAR;
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
-- `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes.
+- `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
+- `microblossom-d3-sim-runner`: native half of the packaged Rust/Scala/Verilator accelerator smoke;
+- `verilator-5_014`: the simulator version validated by the upstream MicroBlossom workflow.
 
 ```sh
 nix build .#microblossom-host
 nix build .#microblossom-scala
 nix build .#microblossom-d3-graph
 nix build .#microblossom-d3-rtl
+nix build .#checks.x86_64-linux.d3-behavior-smoke
 nix flake check
 
 # Format migration-owned Nix and Rust sources through treefmt-nix.
@@ -84,7 +87,7 @@ nix fmt -- flake.nix src/cpu/embedded/build.rs \
   src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
 ```
 
-The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware.
+The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware. The behavior smoke runs the embedded Rust hardware contract against a Scala-generated AXI4 accelerator under Verilator 5.014 and preserves its instruction/readout log as the check output.
 
 The baseline accelerator does not require a RISC-V CPU. The optional VexRiscv-dependent Blinky demos remain in the repository but are excluded from the generator JAR and its dependency closure. The planned V80 CPU migration targets the card's hard Arm processing system.
 

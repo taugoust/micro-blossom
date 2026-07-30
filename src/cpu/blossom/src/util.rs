@@ -2,6 +2,7 @@ use konst::{option, primitive::parse_usize, result::unwrap_ctx};
 use lazy_static::lazy_static;
 use rand::{distributions::Alphanumeric, Rng};
 use std::env;
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Mutex;
 
@@ -19,14 +20,12 @@ pub struct ScalaMicroBlossomRunner {}
 impl ScalaMicroBlossomRunner {
     /// private new function
     fn new() -> Self {
-        // if MANUALLY_COMPILE_QEC is set, then ignore the compile process
-        let manual_compile = match std::env::var("MANUALLY_COMPILE_QEC") {
-            Ok(value) => value != "",
-            Err(_) => false,
-        };
-        if !manual_compile {
+        // A packaged JAR is immutable and was already built by Nix. Preserve
+        // the source-tree workflow when no explicit JAR is provided.
+        let packaged_jar = env::var_os("MICROBLOSSOM_SCALA_JAR").is_some();
+        if !packaged_jar && !env_is_set("MANUALLY_COMPILE_QEC") {
             let mut child = Command::new("sbt")
-                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../"))
+                .current_dir(Self::source_root())
                 .arg("assembly")
                 .spawn()
                 .unwrap();
@@ -36,16 +35,41 @@ impl ScalaMicroBlossomRunner {
         Self {}
     }
 
+    fn source_root() -> PathBuf {
+        PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../"))
+    }
+
+    fn jar_path() -> PathBuf {
+        env::var_os("MICROBLOSSOM_SCALA_JAR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Self::source_root().join("target/scala-2.12/microblossom.jar"))
+    }
+
+    fn work_dir() -> PathBuf {
+        env::var_os("MICROBLOSSOM_SIM_WORKDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(Self::source_root)
+    }
+
+    fn java_command(class_name: &str) -> Command {
+        let java = env::var_os("JAVA").unwrap_or_else(|| "java".into());
+        let heap = env::var("MICROBLOSSOM_JAVA_HEAP").unwrap_or_else(|_| "32G".to_string());
+        let mut command = Command::new(java);
+        command
+            .current_dir(Self::work_dir())
+            .arg(format!("-Xmx{heap}"))
+            .arg("-cp")
+            .arg(Self::jar_path())
+            .arg(class_name);
+        command
+    }
+
     pub fn run<I, S>(&self, class_name: &str, parameters: I) -> std::io::Result<Child>
     where
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        Command::new("java")
-            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../"))
-            .args(["-Xmx32G", "-cp", "target/scala-2.12/microblossom.jar", class_name])
-            .args(parameters)
-            .spawn()
+        Self::java_command(class_name).args(parameters).spawn()
     }
 
     /// blocking call that gets the stdout
@@ -54,11 +78,7 @@ impl ScalaMicroBlossomRunner {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let output = Command::new("java")
-            .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../"))
-            .args(["-Xmx32G", "-cp", "target/scala-2.12/microblossom.jar", class_name])
-            .args(parameters)
-            .output()?;
+        let output = Self::java_command(class_name).args(parameters).output()?;
         String::from_utf8(output.stdout).map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
     }
 }
