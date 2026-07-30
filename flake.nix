@@ -118,6 +118,7 @@
 
             nativeBuildInputs = [
               pkgs.jdk11
+              pkgs.strip-nondeterminism
               microblossomSbt
             ];
 
@@ -143,6 +144,10 @@
               install -Dm644 target/scala-2.12/microblossom.jar \
                 "$out/share/java/microblossom.jar"
               runHook postInstall
+            '';
+
+            postFixup = ''
+              strip-nondeterminism "$out/share/java/microblossom.jar"
             '';
 
             meta = {
