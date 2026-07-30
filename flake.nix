@@ -52,6 +52,7 @@
           settings.formatter.rustfmt.includes = nixpkgs.lib.mkForce [
             "src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs"
             "src/cpu/blossom/src/util.rs"
+            "src/cpu/blossom/tests/nix_d3_golden.rs"
             "src/cpu/embedded/build.rs"
             "src/qshell/**/*.rs"
           ];
@@ -216,6 +217,40 @@
             };
           });
 
+          d3GoldenDecode = microblossomHost.overrideAttrs (old: {
+            pname = "microblossom-d3-golden-decode";
+            nativeCheckInputs = (old.nativeCheckInputs or [ ]) ++ [
+              pkgs.coreutils
+              pkgs.gnumake
+              pkgs.jdk11
+              pkgs.stdenv.cc
+              verilator_5_014
+            ];
+            doCheck = true;
+            checkPhase = ''
+              runHook preCheck
+              export JAVA=${pkgs.jdk11}/bin/java
+              export MICROBLOSSOM_SCALA_JAR=${microblossomScala}/share/java/microblossom.jar
+              export MICROBLOSSOM_SIM_WORKDIR="$TMPDIR/sim"
+              export MICROBLOSSOM_JAVA_HEAP=4G
+              mkdir -p "$MICROBLOSSOM_SIM_WORKDIR"
+
+              timeout 600 cargo test --release --test nix_d3_golden -- --nocapture 2>&1 | \
+                tee "$TMPDIR/golden.log"
+              grep -F 'NIX_D3_GOLDEN defects=[0] correction_edges=[2] total_weight=2' \
+                "$TMPDIR/golden.log" >/dev/null
+              runHook postCheck
+            '';
+            installPhase = ''
+              mkdir -p "$out"
+              cp "$TMPDIR/golden.log" "$out/golden.log"
+              verilator --version > "$out/verilator-version.txt"
+            '';
+            meta = builtins.removeAttrs old.meta [ "mainProgram" ] // {
+              description = "Golden d3 primal/AXI4-dual decode comparison";
+            };
+          });
+
           d3Fixture =
             pkgs.runCommand "microblossom-code-capacity-repetition-d3-v1"
               {
@@ -336,6 +371,7 @@
           microblossom-host = microblossomHost;
           microblossom-scala = microblossomScala;
           microblossom-d3-sim-runner = microblossomD3SimRunner;
+          microblossom-d3-golden-decode = d3GoldenDecode;
           microblossom-d3-graph = d3Fixture;
           microblossom-d3-rtl = d3Rtl;
           verilator-5_014 = verilator_5_014;
@@ -354,6 +390,7 @@
         in
         {
           formatting = (treefmtEval system).config.build.check self;
+          d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
 
           scala-package-contract =
             pkgs.runCommand "microblossom-scala-package-contract"
@@ -390,6 +427,11 @@
                 export MICROBLOSSOM_SCALA_JAR=${scala}/share/java/microblossom.jar
                 export MICROBLOSSOM_SIM_WORKDIR="$TMPDIR/work"
                 export MICROBLOSSOM_JAVA_HEAP=4G
+                export BUS_TYPE=Axi4
+                export USE_64_BUS=1
+                export CLOCK_DIVIDE_BY=2
+                export NO_WAVEFORM=1
+                export NO_DEBUGGER_FILES=1
                 mkdir -p "$MICROBLOSSOM_SIM_WORKDIR" "$out"
 
                 timeout 600 embedded_simulator "$fixture/graph.json" 2>&1 | \
