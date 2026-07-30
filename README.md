@@ -63,6 +63,31 @@ For people concerned about why we evaluate the average latency rather than worst
     - resource_estimate: post-implementation resource usage
 
 
+## Reproducible Nix baseline
+
+The first QShell migration stage provides a pinned, board-independent Nix baseline before adding U280 and V80 application packages. Current outputs are:
+
+- `microblossom-host`: native Rust primal decoder and deterministic graph tool, built with nightly `2023-11-16`;
+- `microblossom-scala`: offline-built Scala/SpinalHDL generator JAR;
+- `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
+- `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes.
+
+```sh
+nix build .#microblossom-host
+nix build .#microblossom-scala
+nix build .#microblossom-d3-graph
+nix build .#microblossom-d3-rtl
+nix flake check
+
+# Format migration-owned Nix and Rust sources through treefmt-nix.
+nix fmt -- flake.nix src/cpu/embedded/build.rs \
+  src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
+```
+
+The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware.
+
+The baseline accelerator does not require a RISC-V CPU. The optional VexRiscv-dependent Blinky demos remain in the repository but are excluded from the generator JAR and its dependency closure. The planned V80 CPU migration targets the card's hard Arm processing system.
+
 ## Usage
 
 Micro Blossom consists of two parts: the CPU program in Rust and the FPGA program in Scala.

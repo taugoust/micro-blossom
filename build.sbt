@@ -3,13 +3,19 @@ ThisBuild / scalaVersion := "2.12.12"
 ThisBuild / organization := "org.yecl"
 
 val spinalVersion = "1.9.3"
-val vexRiscV = RootProject(uri("https://github.com/yuewuo/VexRiscv.git"))
+
+// The VexRiscv-dependent Blinky demos are unrelated to the generated
+// MicroBlossom accelerator and to the V80 hard-CPU integration. Keep their
+// sources in-tree, but leave them out of the baseline generator dependency
+// closure so sbt does not fetch a mutable RISC-V CPU repository.
+val vexRiscvDemoSources = "BlinkyAsm.scala" || "BlinkyPower.scala"
 
 lazy val microblossom = (project in file("."))
-  .dependsOn(vexRiscV)
   .settings(
     Compile / scalaSource := baseDirectory.value / "src" / "fpga",
     Test / scalaSource := baseDirectory.value / "src" / "fpga",
+    Compile / unmanagedSources / excludeFilter := HiddenFileFilter || vexRiscvDemoSources,
+    Test / unmanagedSources / excludeFilter := HiddenFileFilter || vexRiscvDemoSources,
     assembly / assemblyJarName := "microblossom.jar",
     assembly / test := {},
     assembly / assemblyMergeStrategy := {

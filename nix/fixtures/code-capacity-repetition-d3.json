@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "code-capacity-repetition-d3-v1",
+  "purpose": "Canonical first Nix and QShell integration slice",
+  "code": {
+    "family": "code-capacity-repetition",
+    "distance": 3,
+    "physicalErrorRate": 0.1,
+    "maxHalfWeight": 1
+  },
+  "generator": {
+    "binary": "generate_nix_d3_fixture",
+    "source": "src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs"
+  },
+  "expectedGraph": {
+    "sha256": "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5",
+    "vertexNum": 4,
+    "edgeNum": 3,
+    "virtualVertexNum": 2
+  },
+  "accelerator": {
+    "busType": "Axi4",
+    "language": "verilog",
+    "baseAddress": 0,
+    "broadcastDelay": 0,
+    "convergecastDelay": 1,
+    "contextDepth": 1,
+    "conflictChannels": 1,
+    "hardCodeWeights": true,
+    "supportAddDefectVertex": true,
+    "supportOffloading": false,
+    "supportLayerFusion": false,
+    "supportLoadStallEmulator": false,
+    "injectRegisters": [],
+    "clockDivideBy": 2
+  },
+  "smoke": {
+    "kind": "accelerator-contract",
+    "embeddedMain": "test_micro_blossom",
+    "edge": {
+      "left": 1,
+      "virtual": 2,
+      "weight": 2
+    },
+    "expectedReadout": {
+      "afterResetMaxGrowable": 255,
+      "afterAddDefectMaxGrowable": 2,
+      "afterGrowMaxGrowable": 0,
+      "afterGrowHasConflict": true
+    }
+  }
+}
