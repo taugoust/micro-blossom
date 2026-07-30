@@ -85,6 +85,14 @@
             ];
           };
 
+          protocolSource = lib.fileset.toSource {
+            root = ./src/qshell;
+            fileset = lib.fileset.unions [
+              ./src/qshell/README.md
+              ./src/qshell/protocol
+            ];
+          };
+
           scalaSource = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
@@ -169,6 +177,33 @@
 
             meta = {
               description = "MicroBlossom SpinalHDL generator and simulation JAR";
+              license = lib.licenses.mit;
+              platforms = systems;
+            };
+          };
+
+          microblossomQshellProtocol = rustPlatform.buildRustPackage {
+            pname = "microblossom-qshell-protocol";
+            version = "0.1.0";
+            src = protocolSource;
+
+            postUnpack = ''
+              sourceRoot="$sourceRoot/protocol"
+            '';
+
+            cargoLock.lockFile = ./src/qshell/protocol/Cargo.lock;
+            doCheck = true;
+
+            installPhase = ''
+              contract="$out/share/microblossom/qshell-protocol"
+              mkdir -p "$contract/src"
+              cp Cargo.toml Cargo.lock "$contract/"
+              cp src/lib.rs "$contract/src/"
+              cp ../README.md "$contract/README.md"
+            '';
+
+            meta = {
+              description = "64-byte record codec for the host-driven MicroBlossom QShell baseline";
               license = lib.licenses.mit;
               platforms = systems;
             };
@@ -370,6 +405,7 @@
           default = microblossomHost;
           microblossom-host = microblossomHost;
           microblossom-scala = microblossomScala;
+          microblossom-qshell-protocol = microblossomQshellProtocol;
           microblossom-d3-sim-runner = microblossomD3SimRunner;
           microblossom-d3-golden-decode = d3GoldenDecode;
           microblossom-d3-graph = d3Fixture;
@@ -390,6 +426,7 @@
         in
         {
           formatting = (treefmtEval system).config.build.check self;
+          qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
 
           scala-package-contract =

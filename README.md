@@ -69,6 +69,7 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 
 - `microblossom-host`: native Rust primal decoder and deterministic graph tool, built with nightly `2023-11-16`;
 - `microblossom-scala`: offline-built Scala/SpinalHDL generator JAR;
+- `microblossom-qshell-protocol`: tested source contract for the versioned 64-byte host/QShell record codec;
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
 - `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
 - `microblossom-d3-sim-runner`: native half of the packaged Rust/Scala/Verilator accelerator smoke;
@@ -78,6 +79,7 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 ```sh
 nix build .#microblossom-host
 nix build .#microblossom-scala
+nix build .#microblossom-qshell-protocol
 nix build .#microblossom-d3-graph
 nix build .#microblossom-d3-rtl
 nix build .#checks.x86_64-linux.d3-behavior-smoke
