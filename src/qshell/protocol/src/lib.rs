@@ -2,6 +2,10 @@
 
 use core::fmt;
 
+pub mod qshell_abi_generated;
+
+use qshell_abi_generated as qshell_v2;
+
 pub const RECORD_BYTES: usize = 64;
 pub const MAGIC: [u8; 4] = *b"MBQ1";
 pub const VERSION: u8 = 1;
@@ -311,6 +315,389 @@ pub trait RecordLink {
 
     fn send_record(&mut self, record: [u8; RECORD_BYTES]) -> Result<(), Self::Error>;
     fn receive_record(&mut self) -> Result<[u8; RECORD_BYTES], Self::Error>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AxisBeat {
+    pub data: [u8; qshell_v2::BEAT_BYTES],
+    pub keep: u64,
+    pub last: bool,
+}
+
+/// Blocking transport for individual 64-byte AXI-stream beats.
+///
+/// Implementations must preserve beat order and the exact low-lane `keep`
+/// mask. A Coyote implementation can map each two-beat record to one 112-byte
+/// transfer, but it must not pad the final continuation to 128 valid bytes.
+pub trait BeatLink {
+    type Error;
+
+    fn send_beat(&mut self, beat: AxisBeat) -> Result<(), Self::Error>;
+    fn receive_beat(&mut self) -> Result<AxisBeat, Self::Error>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QshellV2Route {
+    pub context_id: u32,
+    pub initial_round_id: u32,
+    pub source_endpoint_id: u32,
+    pub route_capability_id: u32,
+    /// Optional expected decoder endpoint for correction attribution. Leave
+    /// this unset for the current identity-shell baseline, which does not yet
+    /// stamp a decoder endpoint.
+    pub expected_decoder_endpoint_id: Option<u32>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum QshellV2LinkError<LinkError> {
+    Link(LinkError),
+    InnerRecord(DecodeError),
+    UnexpectedInnerResponse,
+    CommandSequence { expected: u32, actual: u32 },
+    MalformedEnvelope,
+    UnexpectedClass(u8),
+    InvalidEnvelopeFlags(u16),
+    InvalidEnvelopeLength(u32),
+    InvalidEnvelopeKeep { expected: u64, actual: u64 },
+    MetadataMismatch,
+    CorrectionSequence { expected: u32, actual: u32 },
+    EndOfRoundMismatch,
+    RemoteQshellError { code: u16, scope: u8, detail: u32 },
+}
+
+impl<LinkError: fmt::Display> fmt::Display for QshellV2LinkError<LinkError> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Link(error) => write!(formatter, "QShell beat link failed: {error}"),
+            Self::InnerRecord(error) => write!(formatter, "invalid MBQ1 record: {error}"),
+            Self::UnexpectedInnerResponse => {
+                formatter.write_str("cannot send an MBQ1 response as a QShell command")
+            }
+            Self::CommandSequence { expected, actual } => write!(
+                formatter,
+                "QShell command sequence mismatch: expected {expected}, received {actual}"
+            ),
+            Self::MalformedEnvelope => formatter.write_str("malformed QShell ABI-2 envelope"),
+            Self::UnexpectedClass(class) => {
+                write!(formatter, "unexpected QShell record class {class}")
+            }
+            Self::InvalidEnvelopeFlags(flags) => {
+                write!(formatter, "invalid QShell envelope flags 0x{flags:04x}")
+            }
+            Self::InvalidEnvelopeLength(bytes) => {
+                write!(formatter, "invalid QShell envelope payload length {bytes}")
+            }
+            Self::InvalidEnvelopeKeep { expected, actual } => write!(
+                formatter,
+                "invalid QShell keep mask 0x{actual:016x}, expected 0x{expected:016x}"
+            ),
+            Self::MetadataMismatch => formatter.write_str("QShell response metadata mismatch"),
+            Self::CorrectionSequence { expected, actual } => write!(
+                formatter,
+                "QShell correction sequence mismatch: expected {expected}, received {actual}"
+            ),
+            Self::EndOfRoundMismatch => {
+                formatter.write_str("QShell and MBQ1 terminal markers disagree")
+            }
+            Self::RemoteQshellError {
+                code,
+                scope,
+                detail,
+            } => write!(
+                formatter,
+                "QShell error {code} with scope {scope} (detail {detail})"
+            ),
+        }
+    }
+}
+
+impl<LinkError: fmt::Debug + fmt::Display> std::error::Error for QshellV2LinkError<LinkError> {}
+
+/// Converts the internal fixed-size MBQ1 `RecordLink` contract to canonical
+/// QShell ABI-2 beats without owning a second copy of the ABI constants.
+pub struct QshellV2RecordLink<Link> {
+    link: Link,
+    route: QshellV2Route,
+    round_id: u32,
+    command_sequence: u32,
+    correction_sequence: u32,
+}
+
+impl<Link> QshellV2RecordLink<Link> {
+    pub fn new(link: Link, route: QshellV2Route) -> Self {
+        Self {
+            link,
+            route,
+            round_id: route.initial_round_id,
+            command_sequence: 0,
+            correction_sequence: 0,
+        }
+    }
+
+    pub const fn round_id(&self) -> u32 {
+        self.round_id
+    }
+
+    pub const fn command_sequence(&self) -> u32 {
+        self.command_sequence
+    }
+
+    pub const fn correction_sequence(&self) -> u32 {
+        self.correction_sequence
+    }
+
+    pub fn link(&self) -> &Link {
+        &self.link
+    }
+
+    pub fn link_mut(&mut self) -> &mut Link {
+        &mut self.link
+    }
+
+    pub fn into_inner(self) -> Link {
+        self.link
+    }
+}
+
+impl<Link: BeatLink> QshellV2RecordLink<Link> {
+    fn send_command(
+        &mut self,
+        bytes: [u8; RECORD_BYTES],
+    ) -> Result<(), QshellV2LinkError<Link::Error>> {
+        let record = Record::decode(&bytes).map_err(QshellV2LinkError::InnerRecord)?;
+        if record.is_response() {
+            return Err(QshellV2LinkError::UnexpectedInnerResponse);
+        }
+        if record.sequence != self.command_sequence {
+            return Err(QshellV2LinkError::CommandSequence {
+                expected: self.command_sequence,
+                actual: record.sequence,
+            });
+        }
+
+        let end_of_round = record.opcode == Opcode::EndJob;
+        let mut first = AxisBeat {
+            data: [0; qshell_v2::BEAT_BYTES],
+            keep: u64::MAX,
+            last: false,
+        };
+        put_u32(&mut first.data, qshell_v2::offset::MAGIC, qshell_v2::MAGIC);
+        first.data[qshell_v2::offset::ABI_VERSION] = qshell_v2::VERSION;
+        first.data[qshell_v2::offset::RECORD_CLASS] = qshell_v2::record_class::SYNDROME;
+        put_u16(
+            &mut first.data,
+            qshell_v2::offset::FLAGS,
+            if end_of_round {
+                qshell_v2::flag::END_OF_ROUND
+            } else {
+                0
+            },
+        );
+        put_u16(
+            &mut first.data,
+            qshell_v2::offset::HEADER_BYTES,
+            qshell_v2::HEADER_BYTES as u16,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::PAYLOAD_BYTES,
+            RECORD_BYTES as u32,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::CONTEXT_ID,
+            self.route.context_id,
+        );
+        put_u32(&mut first.data, qshell_v2::offset::ROUND_ID, self.round_id);
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::SCHEMA_ID,
+            qshell_v2::schema::MICROBLOSSOM_COMMAND_V1,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::SOURCE_ENDPOINT_ID,
+            self.route.source_endpoint_id,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::ROUTE_CAPABILITY_ID,
+            self.route.route_capability_id,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::RECORD_SEQUENCE,
+            record.sequence,
+        );
+        first.data[qshell_v2::HEADER_BYTES..].copy_from_slice(&bytes[..16]);
+
+        let mut continuation = AxisBeat {
+            data: [0; qshell_v2::BEAT_BYTES],
+            keep: low_keep(RECORD_BYTES - 16),
+            last: true,
+        };
+        continuation.data[..RECORD_BYTES - 16].copy_from_slice(&bytes[16..]);
+
+        self.link
+            .send_beat(first)
+            .map_err(QshellV2LinkError::Link)?;
+        self.link
+            .send_beat(continuation)
+            .map_err(QshellV2LinkError::Link)?;
+        if !end_of_round {
+            self.command_sequence = self.command_sequence.wrapping_add(1);
+        }
+        Ok(())
+    }
+
+    fn receive_response(&mut self) -> Result<[u8; RECORD_BYTES], QshellV2LinkError<Link::Error>> {
+        let first = self.link.receive_beat().map_err(QshellV2LinkError::Link)?;
+        if first.keep != u64::MAX {
+            return Err(QshellV2LinkError::InvalidEnvelopeKeep {
+                expected: u64::MAX,
+                actual: first.keep,
+            });
+        }
+        if first.last
+            || get_u32(&first.data, qshell_v2::offset::MAGIC) != qshell_v2::MAGIC
+            || first.data[qshell_v2::offset::ABI_VERSION] != qshell_v2::VERSION
+            || get_u16(&first.data, qshell_v2::offset::HEADER_BYTES)
+                != qshell_v2::HEADER_BYTES as u16
+            || get_u16(&first.data, qshell_v2::offset::RESERVED) != 0
+        {
+            return Err(QshellV2LinkError::MalformedEnvelope);
+        }
+
+        let record_class = first.data[qshell_v2::offset::RECORD_CLASS];
+        let flags = get_u16(&first.data, qshell_v2::offset::FLAGS);
+        let payload_bytes = get_u32(&first.data, qshell_v2::offset::PAYLOAD_BYTES);
+        if record_class == qshell_v2::record_class::ERROR {
+            return self.receive_qshell_error(first, payload_bytes, flags);
+        }
+        if record_class != qshell_v2::record_class::CORRECTION {
+            return Err(QshellV2LinkError::UnexpectedClass(record_class));
+        }
+        if flags & !qshell_v2::flag::END_OF_ROUND != 0 {
+            return Err(QshellV2LinkError::InvalidEnvelopeFlags(flags));
+        }
+        if payload_bytes != RECORD_BYTES as u32 {
+            return Err(QshellV2LinkError::InvalidEnvelopeLength(payload_bytes));
+        }
+        if get_u32(&first.data, qshell_v2::offset::CONTEXT_ID) != self.route.context_id
+            || get_u32(&first.data, qshell_v2::offset::ROUND_ID) != self.round_id
+            || get_u32(&first.data, qshell_v2::offset::SCHEMA_ID)
+                != qshell_v2::schema::MICROBLOSSOM_RESPONSE_V1
+            || get_u32(&first.data, qshell_v2::offset::DESTINATION_ENDPOINT_ID)
+                != self.route.source_endpoint_id
+            || get_u32(&first.data, qshell_v2::offset::ROUTE_CAPABILITY_ID)
+                != self.route.route_capability_id
+            || self
+                .route
+                .expected_decoder_endpoint_id
+                .is_some_and(|endpoint| {
+                    get_u32(&first.data, qshell_v2::offset::SOURCE_ENDPOINT_ID) != endpoint
+                })
+        {
+            return Err(QshellV2LinkError::MetadataMismatch);
+        }
+        let actual_sequence = get_u32(&first.data, qshell_v2::offset::RECORD_SEQUENCE);
+        if actual_sequence != self.correction_sequence {
+            return Err(QshellV2LinkError::CorrectionSequence {
+                expected: self.correction_sequence,
+                actual: actual_sequence,
+            });
+        }
+
+        let continuation = self.link.receive_beat().map_err(QshellV2LinkError::Link)?;
+        let expected_keep = low_keep(RECORD_BYTES - 16);
+        if continuation.keep != expected_keep {
+            return Err(QshellV2LinkError::InvalidEnvelopeKeep {
+                expected: expected_keep,
+                actual: continuation.keep,
+            });
+        }
+        if !continuation.last {
+            return Err(QshellV2LinkError::MalformedEnvelope);
+        }
+
+        let mut payload = [0; RECORD_BYTES];
+        payload[..16].copy_from_slice(&first.data[qshell_v2::HEADER_BYTES..]);
+        payload[16..].copy_from_slice(&continuation.data[..RECORD_BYTES - 16]);
+        let inner = Record::decode(&payload).map_err(QshellV2LinkError::InnerRecord)?;
+        let envelope_eor = flags & qshell_v2::flag::END_OF_ROUND != 0;
+        let inner_terminal = matches!(inner.opcode, Opcode::Completion | Opcode::Error);
+        if envelope_eor != inner_terminal {
+            return Err(QshellV2LinkError::EndOfRoundMismatch);
+        }
+        if envelope_eor {
+            self.round_id = self.round_id.wrapping_add(1);
+            self.command_sequence = 0;
+            self.correction_sequence = 0;
+        } else {
+            self.correction_sequence = self.correction_sequence.wrapping_add(1);
+        }
+        Ok(payload)
+    }
+
+    fn receive_qshell_error(
+        &mut self,
+        first: AxisBeat,
+        payload_bytes: u32,
+        flags: u16,
+    ) -> Result<[u8; RECORD_BYTES], QshellV2LinkError<Link::Error>> {
+        if flags != 0 {
+            return Err(QshellV2LinkError::InvalidEnvelopeFlags(flags));
+        }
+        if payload_bytes != 24 {
+            return Err(QshellV2LinkError::InvalidEnvelopeLength(payload_bytes));
+        }
+        let continuation = self.link.receive_beat().map_err(QshellV2LinkError::Link)?;
+        if continuation.keep != low_keep(8) || !continuation.last {
+            return Err(QshellV2LinkError::MalformedEnvelope);
+        }
+        let payload = &first.data[qshell_v2::HEADER_BYTES..];
+        Err(QshellV2LinkError::RemoteQshellError {
+            code: u16::from_le_bytes(payload[0..2].try_into().unwrap()),
+            scope: payload[2],
+            detail: u32::from_le_bytes(payload[4..8].try_into().unwrap()),
+        })
+    }
+}
+
+impl<Link: BeatLink> RecordLink for QshellV2RecordLink<Link> {
+    type Error = QshellV2LinkError<Link::Error>;
+
+    fn send_record(&mut self, record: [u8; RECORD_BYTES]) -> Result<(), Self::Error> {
+        self.send_command(record)
+    }
+
+    fn receive_record(&mut self) -> Result<[u8; RECORD_BYTES], Self::Error> {
+        self.receive_response()
+    }
+}
+
+const fn low_keep(bytes: usize) -> u64 {
+    if bytes == 64 {
+        u64::MAX
+    } else {
+        (1_u64 << bytes) - 1
+    }
+}
+
+fn put_u16(target: &mut [u8], offset: usize, value: u16) {
+    target[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+}
+
+fn put_u32(target: &mut [u8], offset: usize, value: u32) {
+    target[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+}
+
+fn get_u16(source: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(source[offset..offset + 2].try_into().unwrap())
+}
+
+fn get_u32(source: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(source[offset..offset + 4].try_into().unwrap())
 }
 
 #[derive(Debug)]
@@ -787,6 +1174,260 @@ mod tests {
         assert!(matches!(
             transport.mmio_read(AccessWidth::DoubleWord, 0x100),
             Err(TransportError::Decode(DecodeError::BadMagic))
+        ));
+    }
+
+    #[derive(Default)]
+    struct MockBeatLink {
+        sent: Vec<AxisBeat>,
+        responses: std::collections::VecDeque<AxisBeat>,
+    }
+
+    impl BeatLink for MockBeatLink {
+        type Error = &'static str;
+
+        fn send_beat(&mut self, beat: AxisBeat) -> Result<(), Self::Error> {
+            self.sent.push(beat);
+            Ok(())
+        }
+
+        fn receive_beat(&mut self) -> Result<AxisBeat, Self::Error> {
+            self.responses.pop_front().ok_or("beat queue empty")
+        }
+    }
+
+    fn route() -> QshellV2Route {
+        QshellV2Route {
+            context_id: 7,
+            initial_round_id: 42,
+            source_endpoint_id: 0x12,
+            route_capability_id: 0x8765_4321,
+            expected_decoder_endpoint_id: Some(0x101),
+        }
+    }
+
+    fn correction_beats(
+        payload: [u8; RECORD_BYTES],
+        sequence: u32,
+        end_of_round: bool,
+    ) -> [AxisBeat; 2] {
+        let mut first = AxisBeat {
+            data: [0; qshell_v2::BEAT_BYTES],
+            keep: u64::MAX,
+            last: false,
+        };
+        put_u32(&mut first.data, qshell_v2::offset::MAGIC, qshell_v2::MAGIC);
+        first.data[qshell_v2::offset::ABI_VERSION] = qshell_v2::VERSION;
+        first.data[qshell_v2::offset::RECORD_CLASS] = qshell_v2::record_class::CORRECTION;
+        put_u16(
+            &mut first.data,
+            qshell_v2::offset::FLAGS,
+            if end_of_round {
+                qshell_v2::flag::END_OF_ROUND
+            } else {
+                0
+            },
+        );
+        put_u16(
+            &mut first.data,
+            qshell_v2::offset::HEADER_BYTES,
+            qshell_v2::HEADER_BYTES as u16,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::PAYLOAD_BYTES,
+            RECORD_BYTES as u32,
+        );
+        put_u32(&mut first.data, qshell_v2::offset::CONTEXT_ID, 7);
+        put_u32(&mut first.data, qshell_v2::offset::ROUND_ID, 42);
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::SCHEMA_ID,
+            qshell_v2::schema::MICROBLOSSOM_RESPONSE_V1,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::SOURCE_ENDPOINT_ID,
+            0x101,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::DESTINATION_ENDPOINT_ID,
+            0x12,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::ROUTE_CAPABILITY_ID,
+            0x8765_4321,
+        );
+        put_u32(&mut first.data, qshell_v2::offset::ROUTE_VERSION, 9);
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::RECORD_SEQUENCE,
+            sequence,
+        );
+        first.data[qshell_v2::HEADER_BYTES..].copy_from_slice(&payload[..16]);
+
+        let mut continuation = AxisBeat {
+            data: [0; qshell_v2::BEAT_BYTES],
+            keep: low_keep(48),
+            last: true,
+        };
+        continuation.data[..48].copy_from_slice(&payload[16..]);
+        [first, continuation]
+    }
+
+    fn qshell_error_beats(code: u16, scope: u8, detail: u32) -> [AxisBeat; 2] {
+        let mut first = AxisBeat {
+            data: [0; qshell_v2::BEAT_BYTES],
+            keep: u64::MAX,
+            last: false,
+        };
+        put_u32(&mut first.data, qshell_v2::offset::MAGIC, qshell_v2::MAGIC);
+        first.data[qshell_v2::offset::ABI_VERSION] = qshell_v2::VERSION;
+        first.data[qshell_v2::offset::RECORD_CLASS] = qshell_v2::record_class::ERROR;
+        put_u16(
+            &mut first.data,
+            qshell_v2::offset::HEADER_BYTES,
+            qshell_v2::HEADER_BYTES as u16,
+        );
+        put_u32(&mut first.data, qshell_v2::offset::PAYLOAD_BYTES, 24);
+        put_u32(
+            &mut first.data,
+            qshell_v2::offset::SCHEMA_ID,
+            qshell_v2::schema::ERROR_V1,
+        );
+        let payload = &mut first.data[qshell_v2::HEADER_BYTES..];
+        payload[0..2].copy_from_slice(&code.to_le_bytes());
+        payload[2] = scope;
+        payload[3] = qshell_v2::record_class::SYNDROME;
+        payload[4..8].copy_from_slice(&detail.to_le_bytes());
+
+        let continuation = AxisBeat {
+            data: [0; qshell_v2::BEAT_BYTES],
+            keep: low_keep(8),
+            last: true,
+        };
+        [first, continuation]
+    }
+
+    #[test]
+    fn qshell_v2_link_frames_commands_and_validates_corrections() {
+        let mut link = QshellV2RecordLink::new(MockBeatLink::default(), route());
+        let begin = Record::begin_job(GRAPH_ID, 7, 1).encode();
+        link.send_record(begin).unwrap();
+        assert_eq!(link.command_sequence(), 1);
+        assert_eq!(link.link().sent.len(), 2);
+        let first = link.link().sent[0];
+        assert_eq!(first.keep, u64::MAX);
+        assert!(!first.last);
+        assert_eq!(
+            first.data[qshell_v2::offset::RECORD_CLASS],
+            qshell_v2::record_class::SYNDROME
+        );
+        assert_eq!(
+            get_u32(&first.data, qshell_v2::offset::SCHEMA_ID),
+            qshell_v2::schema::MICROBLOSSOM_COMMAND_V1
+        );
+        assert_eq!(get_u32(&first.data, qshell_v2::offset::ROUTE_VERSION), 0);
+        assert_eq!(&first.data[qshell_v2::HEADER_BYTES..], &begin[..16]);
+        assert_eq!(link.link().sent[1].keep, low_keep(48));
+        assert!(link.link().sent[1].last);
+        assert_eq!(&link.link().sent[1].data[..48], &begin[16..]);
+
+        let read = Record::mmio_read(GRAPH_ID, 7, 1, AccessWidth::DoubleWord, 8).encode();
+        link.send_record(read).unwrap();
+        let read_result =
+            Record::read_result(GRAPH_ID, 7, 1, AccessWidth::DoubleWord, 8, 0x2401_23c0).encode();
+        link.link_mut()
+            .responses
+            .extend(correction_beats(read_result, 0, false));
+        assert_eq!(link.receive_record().unwrap(), read_result);
+        assert_eq!(link.correction_sequence(), 1);
+        assert_eq!(link.round_id(), 42);
+
+        let end = Record::end_job(GRAPH_ID, 7, 2).encode();
+        link.send_record(end).unwrap();
+        let end_first = link.link().sent[4];
+        assert_eq!(
+            get_u16(&end_first.data, qshell_v2::offset::FLAGS),
+            qshell_v2::flag::END_OF_ROUND
+        );
+        let completion = Record::completion(GRAPH_ID, 7, 2, CompletionCode::Success, 1).encode();
+        link.link_mut()
+            .responses
+            .extend(correction_beats(completion, 1, true));
+        assert_eq!(link.receive_record().unwrap(), completion);
+        assert_eq!(link.round_id(), 43);
+        assert_eq!(link.command_sequence(), 0);
+        assert_eq!(link.correction_sequence(), 0);
+    }
+
+    #[test]
+    fn qshell_v2_link_rejects_bad_sequence_and_envelope() {
+        let mut link = QshellV2RecordLink::new(MockBeatLink::default(), route());
+        let wrong = Record::mmio_read(GRAPH_ID, 1, 1, AccessWidth::Byte, 0).encode();
+        assert!(matches!(
+            link.send_record(wrong),
+            Err(QshellV2LinkError::CommandSequence {
+                expected: 0,
+                actual: 1
+            })
+        ));
+
+        let begin = Record::begin_job(GRAPH_ID, 1, 0).encode();
+        link.send_record(begin).unwrap();
+        let response = Record::read_result(GRAPH_ID, 1, 0, AccessWidth::Byte, 0, 0).encode();
+        let [mut first, second] = correction_beats(response, 0, false);
+        first.keep = low_keep(63);
+        link.link_mut().responses.extend([first, second]);
+        assert!(matches!(
+            link.receive_record(),
+            Err(QshellV2LinkError::InvalidEnvelopeKeep { .. })
+        ));
+    }
+
+    #[test]
+    fn native_transport_composes_with_qshell_v2_beat_link() {
+        let read_result =
+            Record::read_result(GRAPH_ID, 77, 1, AccessWidth::DoubleWord, 8, 0x2401_23c0).encode();
+        let completion = Record::completion(GRAPH_ID, 77, 2, CompletionCode::Success, 1).encode();
+        let mut beats = MockBeatLink::default();
+        beats
+            .responses
+            .extend(correction_beats(read_result, 0, false));
+        beats
+            .responses
+            .extend(correction_beats(completion, 1, true));
+
+        let link = QshellV2RecordLink::new(beats, route());
+        let mut transport = QshellMmioTransport::new(link, GRAPH_ID);
+        transport.begin_job(77, 1).unwrap();
+        assert_eq!(
+            transport.mmio_read(AccessWidth::DoubleWord, 8).unwrap(),
+            0x2401_23c0
+        );
+        assert_eq!(transport.end_job().unwrap(), 1);
+        let link = transport.into_inner();
+        assert_eq!(link.round_id(), 43);
+        assert_eq!(link.link().sent.len(), 6);
+    }
+
+    #[test]
+    fn qshell_v2_link_surfaces_structured_qshell_errors() {
+        let mut link = QshellV2RecordLink::new(MockBeatLink::default(), route());
+        link.link_mut().responses.extend(qshell_error_beats(
+            qshell_v2::error_code::SEQUENCE_MISMATCH,
+            qshell_v2::error_scope::ABORT_ROUND,
+            9,
+        ));
+        assert!(matches!(
+            link.receive_record(),
+            Err(QshellV2LinkError::RemoteQshellError {
+                code: qshell_v2::error_code::SEQUENCE_MISMATCH,
+                scope: qshell_v2::error_scope::ABORT_ROUND,
+                detail: 9,
+            })
         ));
     }
 

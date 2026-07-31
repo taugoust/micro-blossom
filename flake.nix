@@ -77,6 +77,7 @@
           verilator_5_014 = mkVerilator_5_014 pkgs;
           qshellLib = qshell.lib.${system};
           qshellAbiSource = qshellLib.qshellAbiSource;
+          qshellContractSource = qshellLib.qshellContractSource;
 
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
@@ -224,7 +225,7 @@
                 contract="$out/share/microblossom/qshell-protocol"
                 mkdir -p "$contract/src"
                 cp Cargo.toml Cargo.lock "$contract/"
-                cp src/lib.rs "$contract/src/"
+                cp src/lib.rs src/qshell_abi_generated.rs "$contract/src/"
                 cp ${./src/qshell/README.md} "$contract/README.md"
               '';
 
@@ -611,6 +612,20 @@
             u280 = mkD3QshellApp "u280";
             v80 = mkD3QshellApp "v80";
           };
+
+          updateQshellRustAbi = pkgs.writeShellApplication {
+            name = "update-qshell-rust-abi";
+            runtimeInputs = [
+              pkgs.git
+              pkgs.python3
+            ];
+            text = ''
+              root="$(git rev-parse --show-toplevel)"
+              python3 "$root/src/qshell/tools/generate_qshell_rust_abi.py" \
+                --spec ${qshellContractSource}/abi/qshell-abi-v2.json \
+                --out "$root/src/qshell/protocol/src/qshell_abi_generated.rs"
+            '';
+          };
         in
         {
           default = microblossomHost;
@@ -628,6 +643,7 @@
           microblossom-d3-qshell-v80-app = d3QshellApps.v80;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
+          update-qshell-rust-abi = updateQshellRustAbi;
           verilator-5_014 = verilator_5_014;
         }
       );
@@ -646,10 +662,27 @@
           qshellCore = self.packages.${system}.microblossom-d3-qshell-core;
           qshellAppHwSource = self.packages.${system}.microblossom-d3-qshell-app-hw-source;
           qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
+          qshellContractSource = qshell.lib.${system}.qshellContractSource;
         in
         {
           formatting = (treefmtEval system).config.build.check self;
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
+
+          qshell-rust-abi-generated =
+            pkgs.runCommand "microblossom-qshell-rust-abi-generated"
+              {
+                nativeBuildInputs = [
+                  pkgs.diffutils
+                  pkgs.python3
+                ];
+              }
+              ''
+                python3 ${./src/qshell/tools/generate_qshell_rust_abi.py} \
+                  --spec ${qshellContractSource}/abi/qshell-abi-v2.json \
+                  --out generated.rs
+                diff -u ${./src/qshell/protocol/src/qshell_abi_generated.rs} generated.rs
+                touch "$out"
+              '';
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
           d3-qshell-golden-decode = self.packages.${system}.microblossom-d3-qshell-golden-decode;
 
@@ -839,7 +872,10 @@
             test -s "$contract/Cargo.lock"
             test -s "$contract/README.md"
             test -s "$contract/src/lib.rs"
+            test -s "$contract/src/qshell_abi_generated.rs"
             cmp ${./src/qshell/protocol/src/lib.rs} "$contract/src/lib.rs"
+            cmp ${./src/qshell/protocol/src/qshell_abi_generated.rs} \
+              "$contract/src/qshell_abi_generated.rs"
             cmp ${./src/qshell/README.md} "$contract/README.md"
             touch "$out"
           '';
