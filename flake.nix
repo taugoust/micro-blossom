@@ -517,6 +517,8 @@
                   "$core/microblossom_qshell_frontend.sv"
                 cp ${./src/qshell/rtl/microblossom_qshell_core.sv} \
                   "$core/microblossom_qshell_core.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
+                  "$core/microblossom_qshell_clock_div2.sv"
                 cp ${./src/qshell/README.md} "$core/protocol.md"
 
                 jq -n \
@@ -524,6 +526,7 @@
                   --arg acceleratorRtlSha256 "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" \
                   --arg frontendSha256 "$(sha256sum "$core/microblossom_qshell_frontend.sv" | cut -d' ' -f1)" \
                   --arg coreSha256 "$(sha256sum "$core/microblossom_qshell_core.sv" | cut -d' ' -f1)" \
+                  --arg clockDividerSha256 "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" \
                   '{
                     schemaVersion: 1,
                     fixtureId: "code-capacity-repetition-d3-v1",
@@ -537,11 +540,17 @@
                     timeoutCyclesDefault: 1024,
                     acceleratorClockDivideBy: 2,
                     acceleratorClockInput: "slow_clk",
+                    applicationClockInputMHz: {
+                      u280: 250,
+                      v80: 333
+                    },
+                    applicationClockStrategy: "BUFGCE_DIV/2",
                     outerQshellEnvelope: "pending-QS0",
                     graphSha256: $graphSha256,
                     acceleratorRtlSha256: $acceleratorRtlSha256,
                     frontendSha256: $frontendSha256,
-                    coreSha256: $coreSha256
+                    coreSha256: $coreSha256,
+                    clockDividerSha256: $clockDividerSha256
                   }' > "$core/core-manifest.json"
               '';
         in
@@ -579,6 +588,27 @@
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
           d3-qshell-golden-decode = self.packages.${system}.microblossom-d3-qshell-golden-decode;
 
+          qshell-clock =
+            pkgs.runCommand "microblossom-qshell-clock"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                mkdir -p "$out"
+                verilator --binary --timing --assert -Wno-fatal \
+                  -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                  --top-module tb_clock_div2 \
+                  ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
+                  ${./src/qshell/tests/microblossom_qshell_clock_div2_tb.sv}
+                ./obj_dir/Vtb_clock_div2 2>&1 | tee "$out/test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_CLOCK_DIV2_PASS' "$out/test.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+              '';
+
           qshell-core =
             pkgs.runCommand "microblossom-qshell-core"
               {
@@ -594,6 +624,8 @@
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = pending-QS0
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
+                test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
+                  "$(jq -er '.clockDividerSha256' "$core/core-manifest.json")"
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   --top-module tb_core \
