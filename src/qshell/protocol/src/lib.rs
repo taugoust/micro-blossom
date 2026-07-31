@@ -336,6 +336,137 @@ pub trait BeatLink {
     fn receive_beat(&mut self) -> Result<AxisBeat, Self::Error>;
 }
 
+#[derive(Debug)]
+pub enum CoyoteProcessError {
+    Io(std::io::Error),
+    Bridge(String),
+    UnexpectedStatus(u8),
+}
+
+impl fmt::Display for CoyoteProcessError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(formatter, "Coyote bridge I/O failed: {error}"),
+            Self::Bridge(error) => write!(formatter, "Coyote bridge rejected request: {error}"),
+            Self::UnexpectedStatus(status) => {
+                write!(formatter, "Coyote bridge returned unknown status {status}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for CoyoteProcessError {}
+
+impl From<std::io::Error> for CoyoteProcessError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+/// Process-backed beat transport for the packaged Coyote C++ bridge.
+///
+/// Keeping the Coyote driver boundary in a separately packaged process avoids
+/// adding C++ ABI assumptions to the Rust protocol crate. The bridge maps the
+/// first/final beat pair to one-sided `LOCAL_WRITE` and `LOCAL_READ` sequences.
+pub struct CoyoteProcessBeatLink {
+    child: std::process::Child,
+    input: std::process::ChildStdin,
+    output: std::io::BufReader<std::process::ChildStdout>,
+}
+
+impl CoyoteProcessBeatLink {
+    pub fn spawn(
+        executable: impl AsRef<std::ffi::OsStr>,
+        vfpga_id: i32,
+        timeout_ms: u64,
+    ) -> Result<Self, CoyoteProcessError> {
+        use std::process::Stdio;
+
+        let mut child = std::process::Command::new(executable)
+            .arg("--vfpga")
+            .arg(vfpga_id.to_string())
+            .arg("--timeout-ms")
+            .arg(timeout_ms.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let input = child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "missing stdin"))?;
+        let output = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "missing stdout"))?;
+        Ok(Self {
+            child,
+            input,
+            output: std::io::BufReader::new(output),
+        })
+    }
+
+    fn read_status(&mut self) -> Result<(), CoyoteProcessError> {
+        use std::io::Read;
+
+        let mut status = [0_u8; 1];
+        self.output.read_exact(&mut status)?;
+        match status[0] {
+            0 => Ok(()),
+            1 => {
+                let mut length = [0_u8; 4];
+                self.output.read_exact(&mut length)?;
+                let length = u32::from_le_bytes(length) as usize;
+                let mut message = vec![0_u8; length];
+                self.output.read_exact(&mut message)?;
+                Err(CoyoteProcessError::Bridge(
+                    String::from_utf8_lossy(&message).into_owned(),
+                ))
+            }
+            status => Err(CoyoteProcessError::UnexpectedStatus(status)),
+        }
+    }
+}
+
+impl BeatLink for CoyoteProcessBeatLink {
+    type Error = CoyoteProcessError;
+
+    fn send_beat(&mut self, beat: AxisBeat) -> Result<(), Self::Error> {
+        use std::io::Write;
+
+        self.input.write_all(&[1, u8::from(beat.last)])?;
+        self.input.write_all(&beat.keep.to_le_bytes())?;
+        self.input.write_all(&beat.data)?;
+        self.input.flush()?;
+        self.read_status()
+    }
+
+    fn receive_beat(&mut self) -> Result<AxisBeat, Self::Error> {
+        use std::io::{Read, Write};
+
+        self.input.write_all(&[2])?;
+        self.input.flush()?;
+        self.read_status()?;
+        let mut last = [0_u8; 1];
+        let mut keep = [0_u8; 8];
+        let mut data = [0_u8; qshell_v2::BEAT_BYTES];
+        self.output.read_exact(&mut last)?;
+        self.output.read_exact(&mut keep)?;
+        self.output.read_exact(&mut data)?;
+        Ok(AxisBeat {
+            data,
+            keep: u64::from_le_bytes(keep),
+            last: last[0] != 0,
+        })
+    }
+}
+
+impl Drop for CoyoteProcessBeatLink {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct QshellV2Route {
     pub context_id: u32,

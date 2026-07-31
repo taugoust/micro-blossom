@@ -78,6 +78,7 @@
           qshellLib = qshell.lib.${system};
           qshellAbiSource = qshellLib.qshellAbiSource;
           qshellContractSource = qshellLib.qshellContractSource;
+          qshellHostPackage = qshell.packages.${system}.qshell-host;
 
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
@@ -613,6 +614,39 @@
             v80 = mkD3QshellApp "v80";
           };
 
+          microblossomQshellCoyoteBridge = pkgs.stdenv.mkDerivation {
+            pname = "microblossom-qshell-coyote-bridge";
+            version = "0.1.0";
+            src = ./src/qshell/host/microblossom_qshell_coyote_bridge.cpp;
+            dontUnpack = true;
+            nativeBuildInputs = [ pkgs.patchelf ];
+            buildInputs = [ pkgs.boost ];
+            buildPhase = ''
+              runHook preBuild
+              $CXX -std=c++20 -O2 -Wall -Wextra -Werror \
+                -isystem ${qshellHostPackage}/include \
+                "$src" \
+                -L${qshellHostPackage}/lib -lcoyote -pthread \
+                -o microblossom-qshell-coyote-bridge
+              runHook postBuild
+            '';
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 microblossom-qshell-coyote-bridge \
+                "$out/bin/microblossom-qshell-coyote-bridge"
+              patchelf --set-rpath \
+                ${qshellHostPackage}/lib:${lib.makeLibraryPath [ pkgs.stdenv.cc.cc ]} \
+                "$out/bin/microblossom-qshell-coyote-bridge"
+              runHook postInstall
+            '';
+            meta = {
+              description = "One-sided Coyote beat bridge for MicroBlossom QShell ABI 2";
+              license = lib.licenses.mit;
+              platforms = systems;
+              mainProgram = "microblossom-qshell-coyote-bridge";
+            };
+          };
+
           updateQshellRustAbi = pkgs.writeShellApplication {
             name = "update-qshell-rust-abi";
             runtimeInputs = [
@@ -632,6 +666,7 @@
           microblossom-host = microblossomHost;
           microblossom-scala = microblossomScala;
           microblossom-qshell-protocol = microblossomQshellProtocol;
+          microblossom-qshell-coyote-bridge = microblossomQshellCoyoteBridge;
           microblossom-d3-sim-runner = microblossomD3SimRunner;
           microblossom-d3-golden-decode = d3GoldenDecode;
           microblossom-d3-qshell-golden-decode = d3QshellGoldenDecode;
@@ -656,6 +691,7 @@
           host = self.packages.${system}.microblossom-host;
           fixture = self.packages.${system}.microblossom-d3-graph;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
+          coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           scala = self.packages.${system}.microblossom-scala;
           simRunner = self.packages.${system}.microblossom-d3-sim-runner;
           rtl = self.packages.${system}.microblossom-d3-rtl;
@@ -667,6 +703,13 @@
         {
           formatting = (treefmtEval system).config.build.check self;
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
+
+          qshell-coyote-bridge = pkgs.runCommand "microblossom-qshell-coyote-bridge-check" { } ''
+            ${coyoteBridge}/bin/microblossom-qshell-coyote-bridge --self-test \
+              | tee bridge.log
+            grep -F 'MICROBLOSSOM_QSHELL_COYOTE_BRIDGE_PASS' bridge.log >/dev/null
+            touch "$out"
+          '';
 
           qshell-rust-abi-generated =
             pkgs.runCommand "microblossom-qshell-rust-abi-generated"
@@ -858,6 +901,7 @@
               '';
 
           rust-package-contract = pkgs.runCommand "microblossom-rust-package-contract" { } ''
+            test -x ${coyoteBridge}/bin/microblossom-qshell-coyote-bridge
             test -x ${host}/bin/micro_blossom
             test -x ${host}/bin/generate_nix_d3_fixture
             test ! -e ${host}/lib
