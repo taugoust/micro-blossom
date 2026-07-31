@@ -93,6 +93,8 @@ nix fmt -- flake.nix src/cpu/embedded/build.rs \
 
 The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware. The behavior smoke runs the embedded Rust hardware contract against a Scala-generated 64-bit AXI4 accelerator under Verilator 5.014 and preserves its instruction/readout log as the check output. The golden decode uses defect vertex `[0]`, produces correction edge `[2]` with weight `2`, verifies that correction's syndrome, and compares its weight with the serial MWPM reference.
 
+Rust derivations use the locked GitHub release of Crane to vendor dependencies and share one dependency-artifact build across the native host, simulator runner, and golden decode. Fenix still supplies the pinned nightly `2023-11-16` toolchain; Crane does not replace the toolchain pin. The standalone QShell protocol crate has a separate dependency artifact and package contract.
+
 The baseline accelerator does not require a RISC-V CPU. The optional VexRiscv-dependent Blinky demos remain in the repository but are excluded from the generator JAR and its dependency closure. The planned V80 CPU migration targets the card's hard Arm processing system.
 
 ## Usage

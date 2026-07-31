@@ -3,6 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
+    crane.url = "github:ipetkov/crane/v0.23.4";
     fenix = {
       url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -17,6 +18,7 @@
     {
       self,
       nixpkgs,
+      crane,
       fenix,
       treefmt-nix,
       ...
@@ -71,10 +73,11 @@
             file = ./src/cpu/blossom/rust-toolchain.toml;
             sha256 = rustManifestSha256;
           };
-          rustPlatform = pkgs.makeRustPlatform {
-            cargo = rustToolchain;
-            rustc = rustToolchain;
-          };
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+          # Crane's default dummy uses syntax newer than the pinned 2023 nightly.
+          craneDummySource = pkgs.writeText "microblossom-crane-dummy.rs" ''
+            fn main() { }
+          '';
 
           rustSource = lib.fileset.toSource {
             root = ./.;
@@ -86,11 +89,8 @@
           };
 
           protocolSource = lib.fileset.toSource {
-            root = ./src/qshell;
-            fileset = lib.fileset.unions [
-              ./src/qshell/README.md
-              ./src/qshell/protocol
-            ];
+            root = ./src/qshell/protocol;
+            fileset = craneLib.fileset.commonCargoSources ./src/qshell/protocol;
           };
 
           scalaSource = lib.fileset.toSource {
@@ -110,6 +110,7 @@
             nativeBuildInputs = [
               pkgs.cacert
               pkgs.jdk11
+              pkgs.strip-nondeterminism
               microblossomSbt
             ];
 
@@ -127,13 +128,15 @@
               sbt -batch update Test/update assembly
 
               find "$out" -type f \( -name '*.lock' -o -name '*.checked' \) -delete
+              # sbt generates a Java runtime JAR whose ZIP timestamps otherwise vary.
+              find "$out" -type f -name '*.jar' -exec strip-nondeterminism '{}' +
               runHook postBuild
             '';
             installPhase = "true";
 
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-b220Xwt5ZyrktdTwMXHI+848ybdOMulHTWTTgC3yAeo=";
+            outputHash = "sha256-34duI1MezoN3VCZfnRGm9M9K18qJ5VgwZjkgwuFvzKw=";
           };
 
           microblossomScala = pkgs.stdenvNoCC.mkDerivation {
@@ -182,109 +185,161 @@
             };
           };
 
-          microblossomQshellProtocol = rustPlatform.buildRustPackage {
+          protocolCommonArgs = {
             pname = "microblossom-qshell-protocol";
             version = "0.1.0";
             src = protocolSource;
-
-            postUnpack = ''
-              sourceRoot="$sourceRoot/protocol"
-            '';
-
-            cargoLock.lockFile = ./src/qshell/protocol/Cargo.lock;
-            doCheck = true;
-
-            installPhase = ''
-              contract="$out/share/microblossom/qshell-protocol"
-              mkdir -p "$contract/src"
-              cp Cargo.toml Cargo.lock "$contract/"
-              cp src/lib.rs "$contract/src/"
-              cp ../README.md "$contract/README.md"
-            '';
-
-            meta = {
-              description = "64-byte record codec for the host-driven MicroBlossom QShell baseline";
-              license = lib.licenses.mit;
-              platforms = systems;
-            };
+            cargoLock = ./src/qshell/protocol/Cargo.lock;
+            strictDeps = true;
           };
 
-          microblossomHost = rustPlatform.buildRustPackage {
+          protocolCargoArtifacts = craneLib.buildDepsOnly (
+            protocolCommonArgs
+            // {
+              doCheck = true;
+              dummyrs = craneDummySource;
+              dummyBuildrs = craneDummySource;
+            }
+          );
+
+          microblossomQshellProtocol = craneLib.mkCargoDerivation (
+            protocolCommonArgs
+            // {
+              cargoArtifacts = protocolCargoArtifacts;
+              buildPhaseCargoCommand = "cargo test --profile release --locked --no-run";
+              doCheck = true;
+              checkPhaseCargoCommand = "cargo test --profile release --locked";
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = ''
+                contract="$out/share/microblossom/qshell-protocol"
+                mkdir -p "$contract/src"
+                cp Cargo.toml Cargo.lock "$contract/"
+                cp src/lib.rs "$contract/src/"
+                cp ${./src/qshell/README.md} "$contract/README.md"
+              '';
+
+              meta = {
+                description = "64-byte record codec for the host-driven MicroBlossom QShell baseline";
+                license = lib.licenses.mit;
+                platforms = systems;
+              };
+            }
+          );
+
+          hostCommonArgs = {
             pname = "microblossom-host";
             version = "0.0.0-${self.shortRev or "dirty"}";
             src = rustSource;
-
+            cargoLock = ./src/cpu/blossom/Cargo.lock;
+            strictDeps = true;
             postUnpack = ''
               sourceRoot="$sourceRoot/src/cpu/blossom"
             '';
-
-            cargoLock.lockFile = ./src/cpu/blossom/Cargo.lock;
-            cargoBuildFlags = [
-              "--bin"
-              "micro_blossom"
-              "--bin"
-              "generate_nix_d3_fixture"
-            ];
             MICROBLOSSOM_SKIP_CBINDGEN = "1";
-            doCheck = false;
-
-            meta = {
-              description = "Native MicroBlossom primal decoder and deterministic graph tools";
-              license = lib.licenses.mit;
-              platforms = systems;
-              mainProgram = "micro_blossom";
-            };
           };
 
-          microblossomD3SimRunner = microblossomHost.overrideAttrs (old: {
-            pname = "microblossom-d3-sim-runner";
-            cargoBuildFlags = old.cargoBuildFlags ++ [
-              "--bin"
-              "embedded_simulator"
-            ];
-            EMBEDDED_BLOSSOM_MAIN = "test_micro_blossom";
-            EDGE_0_LEFT = "1";
-            EDGE_0_VIRTUAL = "2";
-            EDGE_0_WEIGHT = "2";
-            meta = old.meta // {
-              description = "Native runner for the canonical d3 MicroBlossom RTL smoke";
-              mainProgram = "embedded_simulator";
-            };
-          });
+          hostCargoArtifacts = craneLib.buildDepsOnly (
+            hostCommonArgs
+            // {
+              version = "0.0.0";
+              cargoExtraArgs = "--locked";
+              doCheck = true;
+              dummyrs = craneDummySource;
+              dummyBuildrs = craneDummySource;
+            }
+          );
 
-          d3GoldenDecode = microblossomHost.overrideAttrs (old: {
-            pname = "microblossom-d3-golden-decode";
-            nativeCheckInputs = (old.nativeCheckInputs or [ ]) ++ [
-              pkgs.coreutils
-              pkgs.gnumake
-              pkgs.jdk11
-              pkgs.stdenv.cc
-              verilator_5_014
-            ];
-            doCheck = true;
-            checkPhase = ''
-              runHook preCheck
-              export JAVA=${pkgs.jdk11}/bin/java
-              export MICROBLOSSOM_SCALA_JAR=${microblossomScala}/share/java/microblossom.jar
-              export MICROBLOSSOM_SIM_WORKDIR="$TMPDIR/sim"
-              export MICROBLOSSOM_JAVA_HEAP=4G
-              mkdir -p "$MICROBLOSSOM_SIM_WORKDIR"
+          hostCargoExtraArgs = "--locked --bin micro_blossom --bin generate_nix_d3_fixture";
+          simulatorCargoExtraArgs = "${hostCargoExtraArgs} --bin embedded_simulator";
 
-              timeout 600 cargo test --release --test nix_d3_golden -- --nocapture 2>&1 | \
-                tee "$TMPDIR/golden.log"
-              grep -F 'NIX_D3_GOLDEN defects=[0] correction_edges=[2] total_weight=2' \
-                "$TMPDIR/golden.log" >/dev/null
-              runHook postCheck
-            '';
-            installPhase = ''
-              mkdir -p "$out"
-              cp "$TMPDIR/golden.log" "$out/golden.log"
-              verilator --version > "$out/verilator-version.txt"
-            '';
-            meta = builtins.removeAttrs old.meta [ "mainProgram" ] // {
-              description = "Golden d3 primal/AXI4-dual decode comparison";
-            };
-          });
+          microblossomHost = craneLib.buildPackage (
+            hostCommonArgs
+            // {
+              cargoArtifacts = hostCargoArtifacts;
+              cargoExtraArgs = hostCargoExtraArgs;
+              doCheck = false;
+              installPhaseCommand = ''
+                install -Dm755 target/release/micro_blossom "$out/bin/micro_blossom"
+                install -Dm755 target/release/generate_nix_d3_fixture \
+                  "$out/bin/generate_nix_d3_fixture"
+              '';
+
+              meta = {
+                description = "Native MicroBlossom primal decoder and deterministic graph tools";
+                license = lib.licenses.mit;
+                platforms = systems;
+                mainProgram = "micro_blossom";
+              };
+            }
+          );
+
+          microblossomD3SimRunner = craneLib.buildPackage (
+            hostCommonArgs
+            // {
+              pname = "microblossom-d3-sim-runner";
+              cargoArtifacts = hostCargoArtifacts;
+              cargoExtraArgs = simulatorCargoExtraArgs;
+              doCheck = false;
+              EMBEDDED_BLOSSOM_MAIN = "test_micro_blossom";
+              EDGE_0_LEFT = "1";
+              EDGE_0_VIRTUAL = "2";
+              EDGE_0_WEIGHT = "2";
+              installPhaseCommand = ''
+                install -Dm755 target/release/micro_blossom "$out/bin/micro_blossom"
+                install -Dm755 target/release/generate_nix_d3_fixture \
+                  "$out/bin/generate_nix_d3_fixture"
+                install -Dm755 target/release/embedded_simulator \
+                  "$out/bin/embedded_simulator"
+              '';
+
+              meta = {
+                description = "Native runner for the canonical d3 MicroBlossom RTL smoke";
+                license = lib.licenses.mit;
+                platforms = systems;
+                mainProgram = "embedded_simulator";
+              };
+            }
+          );
+
+          d3GoldenDecode = craneLib.mkCargoDerivation (
+            hostCommonArgs
+            // {
+              pname = "microblossom-d3-golden-decode";
+              cargoArtifacts = hostCargoArtifacts;
+              nativeBuildInputs = [
+                pkgs.coreutils
+                pkgs.gnumake
+                pkgs.jdk11
+                pkgs.stdenv.cc
+                verilator_5_014
+              ];
+              buildPhaseCargoCommand = "cargo test --profile release --locked --test nix_d3_golden --no-run";
+              doCheck = true;
+              checkPhaseCargoCommand = ''
+                export JAVA=${pkgs.jdk11}/bin/java
+                export MICROBLOSSOM_SCALA_JAR=${microblossomScala}/share/java/microblossom.jar
+                export MICROBLOSSOM_SIM_WORKDIR="$TMPDIR/sim"
+                export MICROBLOSSOM_JAVA_HEAP=4G
+                mkdir -p "$MICROBLOSSOM_SIM_WORKDIR"
+
+                timeout 600 cargo test --profile release --locked \
+                  --test nix_d3_golden -- --nocapture 2>&1 | tee "$TMPDIR/golden.log"
+                grep -F 'NIX_D3_GOLDEN defects=[0] correction_edges=[2] total_weight=2' \
+                  "$TMPDIR/golden.log" >/dev/null
+              '';
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = ''
+                mkdir -p "$out"
+                cp "$TMPDIR/golden.log" "$out/golden.log"
+                verilator --version > "$out/verilator-version.txt"
+              '';
+              meta = {
+                description = "Golden d3 primal/AXI4-dual decode comparison";
+                license = lib.licenses.mit;
+                platforms = systems;
+              };
+            }
+          );
 
           d3Fixture =
             pkgs.runCommand "microblossom-code-capacity-repetition-d3-v1"
@@ -419,7 +474,9 @@
         let
           pkgs = import nixpkgs { inherit system; };
           verilator_5_014 = mkVerilator_5_014 pkgs;
+          host = self.packages.${system}.microblossom-host;
           fixture = self.packages.${system}.microblossom-d3-graph;
+          protocol = self.packages.${system}.microblossom-qshell-protocol;
           scala = self.packages.${system}.microblossom-scala;
           simRunner = self.packages.${system}.microblossom-d3-sim-runner;
           rtl = self.packages.${system}.microblossom-d3-rtl;
@@ -428,6 +485,26 @@
           formatting = (treefmtEval system).config.build.check self;
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
+
+          rust-package-contract = pkgs.runCommand "microblossom-rust-package-contract" { } ''
+            test -x ${host}/bin/micro_blossom
+            test -x ${host}/bin/generate_nix_d3_fixture
+            test ! -e ${host}/lib
+
+            test -x ${simRunner}/bin/micro_blossom
+            test -x ${simRunner}/bin/generate_nix_d3_fixture
+            test -x ${simRunner}/bin/embedded_simulator
+            test ! -e ${simRunner}/lib
+
+            contract=${protocol}/share/microblossom/qshell-protocol
+            test -s "$contract/Cargo.toml"
+            test -s "$contract/Cargo.lock"
+            test -s "$contract/README.md"
+            test -s "$contract/src/lib.rs"
+            cmp ${./src/qshell/protocol/src/lib.rs} "$contract/src/lib.rs"
+            cmp ${./src/qshell/README.md} "$contract/README.md"
+            touch "$out"
+          '';
 
           scala-package-contract =
             pkgs.runCommand "microblossom-scala-package-contract"
@@ -536,6 +613,25 @@
                   "$(jq -er '.fixture.expectedGraph.edgeNum' "$root/manifest.json")"
                 test "$(jq -er '.generated.virtualVertexNum' "$root/manifest.json")" = \
                   "$(jq -er '.fixture.expectedGraph.virtualVertexNum' "$root/manifest.json")"
+                touch "$out"
+              '';
+
+          crane-input-contract =
+            pkgs.runCommand "microblossom-crane-input-contract"
+              {
+                nativeBuildInputs = [ pkgs.jq ];
+              }
+              ''
+                lock=${./flake.lock}
+                test "$(jq -er '.nodes.crane.locked.type' "$lock")" = github
+                test "$(jq -er '.nodes.crane.locked.owner' "$lock")" = ipetkov
+                test "$(jq -er '.nodes.crane.locked.repo' "$lock")" = crane
+                test "$(jq -er '.nodes.crane.locked.rev' "$lock")" = \
+                  10e6e3cb966f7cfcc789fe5eee7a85f3188ce08b
+                test "$(jq -er '.nodes.crane.original.ref' "$lock")" = v0.23.4
+                test -n "$(jq -er '.nodes.crane.locked.narHash' "$lock")"
+
+                test "$(jq -r '[.nodes[] | .locked.type? // empty] | any(. == "path")' "$lock")" = false
                 touch "$out"
               '';
 
