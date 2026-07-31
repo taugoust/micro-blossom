@@ -12,6 +12,7 @@ module microblossom_qshell_core #(
     input  logic                 aclk,
     input  logic                 slow_clk,
     input  logic                 aresetn,
+    input  logic                 slow_aresetn,
 
     input  logic [511:0]         s_axis_tdata,
     input  logic [63:0]          s_axis_tkeep,
@@ -119,7 +120,7 @@ MicroBlossomBus inst_accelerator (
     .s0_rresp(m_axi_rresp),
     .s0_rlast(m_axi_rlast),
     .slow_clk(slow_clk),
-    .reset(!aresetn),
+    .reset(!slow_aresetn),
     .clk(aclk)
 );
 

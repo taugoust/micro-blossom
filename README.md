@@ -72,7 +72,9 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-qshell-protocol`: tested source contract for the versioned 64-byte host/QShell record codec;
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
 - `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
-- `microblossom-d3-qshell-core`: provenance-carrying composition of the MBQ1 frontend and generated d3 accelerator, explicitly leaving the outer QShell envelope pending QS0;
+- `microblossom-d3-qshell-core`: provenance-carrying ABI-2 envelope, MBQ1 frontend, generated d3 accelerator, and application clock composition;
+- `microblossom-d3-qshell-{u280,v80}-app-synth`: early synthesis stages against the exact pinned QShell shells;
+- `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed application/partial-image packages;
 - `microblossom-d3-sim-runner`: native half of the packaged Rust/Scala/Verilator accelerator smoke;
 - `microblossom-d3-golden-decode`: a full d3 primal/AXI4-dual decode checked against the serial reference solver;
 - `microblossom-d3-qshell-golden-decode`: the same canonical decode through ordered protocol-v1 records and the native QShell MMIO transport;
@@ -88,8 +90,12 @@ nix build .#checks.x86_64-linux.d3-behavior-smoke
 nix build .#checks.x86_64-linux.d3-golden-decode
 nix build .#checks.x86_64-linux.qshell-frontend
 nix build .#checks.x86_64-linux.qshell-clock
+nix build .#checks.x86_64-linux.qshell-envelope-v2
 nix build .#checks.x86_64-linux.qshell-core
+nix build .#checks.x86_64-linux.qshell-application
 nix build .#checks.x86_64-linux.d3-qshell-golden-decode
+nix build .#microblossom-d3-qshell-u280-app-synth
+nix build .#microblossom-d3-qshell-v80-app-synth
 nix flake check
 
 # Format migration-owned Nix and Rust sources through treefmt-nix.
@@ -97,7 +103,7 @@ nix fmt -- flake.nix src/cpu/embedded/build.rs \
   src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
 ```
 
-The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware. The behavior smoke runs the embedded Rust hardware contract against a Scala-generated 64-bit AXI4 accelerator under Verilator 5.014 and preserves its instruction/readout log as the check output. The golden decode uses defect vertex `[0]`, produces correction edge `[2]` with weight `2`, verifies that correction's syndrome, and compares its weight with the serial MWPM reference. The board-independent QShell frontend check validates MBQ1 record framing, lifecycle, AXI translation, backpressure, reset, errors, and timeout quarantine. The clock check verifies the simulation model for an application-local Xilinx `BUFGCE_DIV/2` slow domain with asynchronous reset assertion and synchronized deassertion; hardware synthesis/routing remains an MB1.3 acceptance gate. The core check instantiates the frontend against the packaged generated `MicroBlossomBus`, reads its exact hardware identity/capability words, submits a reset instruction, and completes a three-operation job. This is the internal application-core stream: its manifest records `outerQshellEnvelope = "pending-QS0"`, so it cannot be mistaken for a resolved shell-facing ABI. The QShell golden check runs the same d3 primal result through the native `RecordLink` transport against the generated accelerator.
+The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware. The behavior smoke runs the embedded Rust hardware contract against a Scala-generated 64-bit AXI4 accelerator under Verilator 5.014 and preserves its instruction/readout log as the check output. The golden decode uses defect vertex `[0]`, produces correction edge `[2]` with weight `2`, verifies that correction's syndrome, and compares its weight with the serial MWPM reference. The board-independent QShell frontend check validates MBQ1 record framing, lifecycle, AXI translation, backpressure, reset, errors, and timeout quarantine. The clock check verifies the simulation model for an application-local Xilinx `BUFGCE_DIV/2` slow domain with asynchronous reset assertion and synchronized deassertion; hardware synthesis/routing remains an MB1.3 acceptance gate. The envelope check consumes generated constants from pinned QShell ABI 2 and verifies two-beat request/response framing, metadata transformation, sequencing, backpressure, and malformed-record recovery. The core check exercises MBQ1 directly against the generated accelerator. The application check combines the envelope, clock, frontend, and accelerator and verifies hardware-info and completion transactions through the complete shell-facing hierarchy. The QShell golden check runs the same d3 primal result through the native `RecordLink` transport against the generated accelerator.
 
 Rust derivations use the locked GitHub release of Crane to vendor dependencies and share one dependency-artifact build across the native host, simulator runner, and golden decode. Fenix still supplies the pinned nightly `2023-11-16` toolchain; Crane does not replace the toolchain pin. The standalone QShell protocol crate has a separate dependency artifact and package contract.
 

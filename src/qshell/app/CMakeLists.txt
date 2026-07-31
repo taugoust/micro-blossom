@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.15)
+
+if(DEFINED ENV{COYOTE_ROOT} AND EXISTS "$ENV{COYOTE_ROOT}/cmake")
+    set(CYT_DIR "$ENV{COYOTE_ROOT}")
+else()
+    set(CYT_DIR "${CMAKE_SOURCE_DIR}/../../../")
+endif()
+list(APPEND CMAKE_MODULE_PATH "${CYT_DIR}/cmake")
+find_package(CoyoteHW REQUIRED)
+
+project(microblossom-qshell-app)
+message("*** MicroBlossom d3 QShell ABI-2 application ***")
+
+set(EN_STRM 1)
+set(N_STRM_AXI 1)
+set(EN_MEM 0)
+set(EN_RDMA 0)
+set(EN_TCP 0)
+set(N_REGIONS 1)
+set(N_CONFIG 1)
+set(EN_PR 1)
+set(BUILD_OPT 1)
+
+if(NOT FDEV_NAME STREQUAL "u280" AND NOT FDEV_NAME STREQUAL "v80")
+    message(FATAL_ERROR "MicroBlossom QShell application supports only u280 or v80")
+endif()
+
+validation_checks_hw()
+load_apps(VFPGA_C0_0 "src/microblossom")
+create_hw()

@@ -12,6 +12,10 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    qshell = {
+      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=qs0-contracts-reference-model&rev=9ba6d34d5e404faadb9c4d99afe49a9285a6b880";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -21,6 +25,7 @@
       crane,
       fenix,
       treefmt-nix,
+      qshell,
       ...
     }:
     let
@@ -70,6 +75,8 @@
           lib = pkgs.lib;
           microblossomSbt = pkgs.sbt.override { jre = pkgs.jdk11; };
           verilator_5_014 = mkVerilator_5_014 pkgs;
+          qshellLib = qshell.lib.${system};
+          qshellAbiSource = qshellLib.qshellAbiSource;
 
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
@@ -519,6 +526,12 @@
                   "$core/microblossom_qshell_core.sv"
                 cp ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
                   "$core/microblossom_qshell_clock_div2.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_envelope_v2.sv} \
+                  "$core/microblossom_qshell_envelope_v2.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_application.sv} \
+                  "$core/microblossom_qshell_application.sv"
+                cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
+                  "$core/qshell_abi_generated.svh"
                 cp ${./src/qshell/README.md} "$core/protocol.md"
 
                 jq -n \
@@ -527,10 +540,14 @@
                   --arg frontendSha256 "$(sha256sum "$core/microblossom_qshell_frontend.sv" | cut -d' ' -f1)" \
                   --arg coreSha256 "$(sha256sum "$core/microblossom_qshell_core.sv" | cut -d' ' -f1)" \
                   --arg clockDividerSha256 "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" \
+                  --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope_v2.sv" | cut -d' ' -f1)" \
+                  --arg applicationSha256 "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" \
+                  --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
+                  --arg qshellRevision '${qshell.rev}' \
                   '{
                     schemaVersion: 1,
                     fixtureId: "code-capacity-repetition-d3-v1",
-                    topModule: "microblossom_qshell_core",
+                    topModule: "microblossom_qshell_application",
                     protocol: "MBQ1",
                     protocolVersion: 1,
                     streamDataBits: 512,
@@ -545,14 +562,55 @@
                       v80: 333
                     },
                     applicationClockStrategy: "BUFGCE_DIV/2",
-                    outerQshellEnvelope: "pending-QS0",
+                    outerQshellEnvelope: "QShell ABI 2",
+                    outerQshellRequestBeats: 2,
+                    outerQshellResponseBeats: 2,
+                    qshellRevision: $qshellRevision,
                     graphSha256: $graphSha256,
                     acceleratorRtlSha256: $acceleratorRtlSha256,
                     frontendSha256: $frontendSha256,
                     coreSha256: $coreSha256,
-                    clockDividerSha256: $clockDividerSha256
+                    clockDividerSha256: $clockDividerSha256,
+                    envelopeSha256: $envelopeSha256,
+                    applicationSha256: $applicationSha256,
+                    qshellAbiSha256: $qshellAbiSha256
                   }' > "$core/core-manifest.json"
               '';
+
+          d3QshellAppHwSource = pkgs.runCommand "microblossom-d3-qshell-app-hw-source-v1" { } ''
+            cp -R ${./src/qshell/app}/. "$out"
+            chmod -R u+w "$out"
+            app="$out/src/microblossom"
+            core=${d3QshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
+            cp "$core/MicroBlossomBus.v" "$app/"
+            cp "$core/microblossom_qshell_frontend.sv" "$app/"
+            cp "$core/microblossom_qshell_core.sv" "$app/"
+            cp "$core/microblossom_qshell_clock_div2.sv" "$app/"
+            cp "$core/microblossom_qshell_envelope_v2.sv" "$app/"
+            cp "$core/microblossom_qshell_application.sv" "$app/"
+            cp "$core/qshell_abi_generated.svh" "$app/"
+            cp "$core/core-manifest.json" "$out/"
+          '';
+
+          mkD3QshellApp =
+            board:
+            qshellLib.mkQshellAppPackage {
+              pname = "microblossom-d3-qshell-${board}-app";
+              hwSource = d3QshellAppHwSource;
+              inherit board;
+              provenance = {
+                application = "microblossom-d3-host-baseline";
+                graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
+                qshellRecordAbi = 2;
+                mbqProtocol = 1;
+                acceleratorClockDivideBy = 2;
+              };
+            };
+
+          d3QshellApps = {
+            u280 = mkD3QshellApp "u280";
+            v80 = mkD3QshellApp "v80";
+          };
         in
         {
           default = microblossomHost;
@@ -565,6 +623,11 @@
           microblossom-d3-graph = d3Fixture;
           microblossom-d3-rtl = d3Rtl;
           microblossom-d3-qshell-core = d3QshellCore;
+          microblossom-d3-qshell-app-hw-source = d3QshellAppHwSource;
+          microblossom-d3-qshell-u280-app = d3QshellApps.u280;
+          microblossom-d3-qshell-v80-app = d3QshellApps.v80;
+          microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
+          microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
           verilator-5_014 = verilator_5_014;
         }
       );
@@ -581,6 +644,8 @@
           simRunner = self.packages.${system}.microblossom-d3-sim-runner;
           rtl = self.packages.${system}.microblossom-d3-rtl;
           qshellCore = self.packages.${system}.microblossom-d3-qshell-core;
+          qshellAppHwSource = self.packages.${system}.microblossom-d3-qshell-app-hw-source;
+          qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
         in
         {
           formatting = (treefmtEval system).config.build.check self;
@@ -609,6 +674,88 @@
                 verilator --version > "$out/verilator-version.txt"
               '';
 
+          qshell-envelope-v2 =
+            pkgs.runCommand "microblossom-qshell-envelope-v2"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.jq
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                abi=${qshellAbiSource}/src/abi/hdl
+                test -s "$abi/qshell_abi_generated.svh"
+                test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
+                  9ba6d34d5e404faadb9c4d99afe49a9285a6b880
+                mkdir -p "$out"
+                verilator --binary --timing --assert -Wno-fatal \
+                  -I"$abi" \
+                  --top-module tb_envelope_v2 \
+                  ${./src/qshell/rtl/microblossom_qshell_envelope_v2.sv} \
+                  ${./src/qshell/tests/microblossom_qshell_envelope_v2_tb.sv}
+                ./obj_dir/Vtb_envelope_v2 2>&1 | tee "$out/test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_ENVELOPE_V2_PASS' "$out/test.log" >/dev/null
+                cp "$abi/qshell_abi_generated.svh" "$out/"
+                verilator --version > "$out/verilator-version.txt"
+              '';
+
+          qshell-app-source =
+            pkgs.runCommand "microblossom-qshell-app-source" { nativeBuildInputs = [ pkgs.jq ]; }
+              ''
+                app=${qshellAppHwSource}/src/microblossom
+                test -s ${qshellAppHwSource}/CMakeLists.txt
+                test -s "$app/vfpga_top.svh"
+                test -s "$app/init_ip.tcl"
+                for source in \
+                  MicroBlossomBus.v \
+                  microblossom_qshell_frontend.sv \
+                  microblossom_qshell_core.sv \
+                  microblossom_qshell_clock_div2.sv \
+                  microblossom_qshell_envelope_v2.sv \
+                  microblossom_qshell_application.sv \
+                  qshell_abi_generated.svh; do
+                  test -s "$app/$source"
+                done
+                grep -F 'load_apps(VFPGA_C0_0 "src/microblossom")' \
+                  ${qshellAppHwSource}/CMakeLists.txt >/dev/null
+                test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
+                  4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
+                test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
+                  9ba6d34d5e404faadb9c4d99afe49a9285a6b880
+                touch "$out"
+              '';
+
+          qshell-application =
+            pkgs.runCommand "microblossom-qshell-application"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
+                mkdir -p "$out"
+                verilator --binary --timing --assert -Wno-fatal \
+                  -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                  -I"$core" \
+                  --top-module tb_application \
+                  "$core/MicroBlossomBus.v" \
+                  "$core/microblossom_qshell_frontend.sv" \
+                  "$core/microblossom_qshell_core.sv" \
+                  "$core/microblossom_qshell_clock_div2.sv" \
+                  "$core/microblossom_qshell_envelope_v2.sv" \
+                  "$core/microblossom_qshell_application.sv" \
+                  ${./src/qshell/tests/microblossom_qshell_application_tb.sv}
+                timeout 120 ./obj_dir/Vtb_application 2>&1 | tee "$out/test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_APPLICATION_PASS' "$out/test.log" >/dev/null
+                cp "$core/core-manifest.json" "$out/"
+                verilator --version > "$out/verilator-version.txt"
+              '';
+
           qshell-core =
             pkgs.runCommand "microblossom-qshell-core"
               {
@@ -621,11 +768,19 @@
               }
               ''
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
-                test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = pending-QS0
+                test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
+                test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
+                  9ba6d34d5e404faadb9c4d99afe49a9285a6b880
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
                   "$(jq -er '.clockDividerSha256' "$core/core-manifest.json")"
+                test "$(sha256sum "$core/microblossom_qshell_envelope_v2.sv" | cut -d' ' -f1)" = \
+                  "$(jq -er '.envelopeSha256' "$core/core-manifest.json")"
+                test "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" = \
+                  "$(jq -er '.applicationSha256' "$core/core-manifest.json")"
+                test "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" = \
+                  "$(jq -er '.qshellAbiSha256' "$core/core-manifest.json")"
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   --top-module tb_core \
@@ -635,6 +790,16 @@
                   ${./src/qshell/tests/microblossom_qshell_core_tb.sv}
                 timeout 120 ./obj_dir/Vtb_core 2>&1 | tee "$out/test.log"
                 grep -F 'MICROBLOSSOM_QSHELL_CORE_PASS' "$out/test.log" >/dev/null
+                verilator --lint-only -Wno-fatal \
+                  -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                  -I"$core" \
+                  --top-module microblossom_qshell_application \
+                  "$core/MicroBlossomBus.v" \
+                  "$core/microblossom_qshell_frontend.sv" \
+                  "$core/microblossom_qshell_core.sv" \
+                  "$core/microblossom_qshell_clock_div2.sv" \
+                  "$core/microblossom_qshell_envelope_v2.sv" \
+                  "$core/microblossom_qshell_application.sv"
                 cp "$core/core-manifest.json" "$out/"
                 verilator --version > "$out/verilator-version.txt"
               '';
@@ -847,4 +1012,12 @@
 
       formatter = forAllSystems (system: (treefmtEval system).config.build.wrapper);
     };
+
+  nixConfig = {
+    extra-sandbox-paths = [
+      "/share/xilinx"
+      "/bin/touch=/run/current-system/sw/bin/touch"
+      "/bin/lscpu=/run/current-system/sw/bin/lscpu"
+    ];
+  };
 }

@@ -7,6 +7,7 @@ localparam logic [31:0] MAGIC = 32'h3151_424d;
 logic aclk = 1'b0;
 logic slow_clk = 1'b0;
 logic aresetn = 1'b0;
+logic slow_aresetn = 1'b0;
 logic [511:0] s_axis_tdata = '0;
 logic [63:0] s_axis_tkeep = '1;
 logic [5:0] s_axis_tid = '0;
@@ -120,6 +121,7 @@ initial begin : test
     repeat (6) @(posedge aclk);
     @(negedge aclk);
     aresetn = 1'b1;
+    slow_aresetn = 1'b1;
     repeat (8) @(posedge aclk);
 
     send_record(record(8'h01, 0, 32'h4d42_4331, 0, 3, 0), 6'h11);
