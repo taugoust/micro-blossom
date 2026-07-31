@@ -5,6 +5,8 @@ use core::fmt;
 pub const RECORD_BYTES: usize = 64;
 pub const MAGIC: [u8; 4] = *b"MBQ1";
 pub const VERSION: u8 = 1;
+pub const UNBOUNDED_OPERATIONS: u64 = u64::MAX;
+pub const MAX_STALE_RESPONSES: usize = 16;
 
 const WIDTH_MASK: u16 = 0x0003;
 const RESPONSE_FLAG: u16 = 0x0100;
@@ -298,6 +300,293 @@ impl Record {
     }
 }
 
+/// Blocking record link used by the native host-side transport.
+///
+/// `send_record` must not return until the record has been accepted into an
+/// ordered link. In particular, backpressure must not permit a later record to
+/// pass an earlier MMIO operation. `receive_record` returns the next complete
+/// response record from that same ordered link.
+pub trait RecordLink {
+    type Error;
+
+    fn send_record(&mut self, record: [u8; RECORD_BYTES]) -> Result<(), Self::Error>;
+    fn receive_record(&mut self) -> Result<[u8; RECORD_BYTES], Self::Error>;
+}
+
+#[derive(Debug)]
+pub enum TransportError<LinkError> {
+    Link(LinkError),
+    Decode(DecodeError),
+    AlreadyActive,
+    Inactive,
+    SequenceOverflow,
+    StaleResponseLimit,
+    UnexpectedResponse {
+        expected: Opcode,
+        actual: Opcode,
+        sequence: u32,
+    },
+    RemoteError {
+        sequence: u32,
+        code: u64,
+        detail: u64,
+    },
+    CompletionFailed {
+        sequence: u32,
+        code: u64,
+        completed_operations: u64,
+    },
+    CompletionCount {
+        expected: u64,
+        actual: u64,
+    },
+}
+
+impl<LinkError: fmt::Display> fmt::Display for TransportError<LinkError> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Link(error) => write!(formatter, "QShell record link failed: {error}"),
+            Self::Decode(error) => write!(formatter, "invalid QShell response: {error}"),
+            Self::AlreadyActive => formatter.write_str("a QShell job is already active"),
+            Self::Inactive => formatter.write_str("no QShell job is active"),
+            Self::SequenceOverflow => formatter.write_str("QShell sequence number overflow"),
+            Self::StaleResponseLimit => formatter.write_str("too many stale QShell responses"),
+            Self::UnexpectedResponse {
+                expected,
+                actual,
+                sequence,
+            } => write!(
+                formatter,
+                "expected {expected:?} for sequence {sequence}, received {actual:?}"
+            ),
+            Self::RemoteError {
+                sequence,
+                code,
+                detail,
+            } => write!(
+                formatter,
+                "QShell frontend error {code} at sequence {sequence} (detail {detail})"
+            ),
+            Self::CompletionFailed {
+                sequence,
+                code,
+                completed_operations,
+            } => write!(
+                formatter,
+                "QShell job failed at sequence {sequence} with completion {code} after {completed_operations} operations"
+            ),
+            Self::CompletionCount { expected, actual } => write!(
+                formatter,
+                "QShell completion reported {actual} operations, expected {expected}"
+            ),
+        }
+    }
+}
+
+impl<LinkError: fmt::Debug + fmt::Display> std::error::Error for TransportError<LinkError> {}
+
+impl<LinkError> From<DecodeError> for TransportError<LinkError> {
+    fn from(error: DecodeError) -> Self {
+        Self::Decode(error)
+    }
+}
+
+/// Stateful native transport preserving the existing synchronous MMIO
+/// semantics over protocol-v1 records.
+pub struct QshellMmioTransport<Link> {
+    link: Link,
+    graph_id: GraphId,
+    request_id: u32,
+    sequence: u32,
+    operations: u64,
+    active: bool,
+}
+
+impl<Link: RecordLink> QshellMmioTransport<Link> {
+    pub fn new(link: Link, graph_id: GraphId) -> Self {
+        Self {
+            link,
+            graph_id,
+            request_id: 0,
+            sequence: 0,
+            operations: 0,
+            active: false,
+        }
+    }
+
+    pub const fn is_active(&self) -> bool {
+        self.active
+    }
+
+    pub const fn operations(&self) -> u64 {
+        self.operations
+    }
+
+    pub fn link(&self) -> &Link {
+        &self.link
+    }
+
+    pub fn link_mut(&mut self) -> &mut Link {
+        &mut self.link
+    }
+
+    pub fn into_inner(self) -> Link {
+        self.link
+    }
+
+    pub fn begin_job(
+        &mut self,
+        request_id: u32,
+        expected_operations: u64,
+    ) -> Result<(), TransportError<Link::Error>> {
+        if self.active {
+            return Err(TransportError::AlreadyActive);
+        }
+        self.link
+            .send_record(Record::begin_job(self.graph_id, request_id, expected_operations).encode())
+            .map_err(TransportError::Link)?;
+        self.request_id = request_id;
+        self.sequence = 1;
+        self.operations = 0;
+        self.active = true;
+        Ok(())
+    }
+
+    pub fn mmio_write(
+        &mut self,
+        width: AccessWidth,
+        address: u64,
+        value: u64,
+    ) -> Result<(), TransportError<Link::Error>> {
+        self.ensure_active()?;
+        let sequence = self.sequence;
+        self.link
+            .send_record(
+                Record::mmio_write(
+                    self.graph_id,
+                    self.request_id,
+                    sequence,
+                    width,
+                    address,
+                    value,
+                )
+                .encode(),
+            )
+            .map_err(TransportError::Link)?;
+        self.advance()?;
+        Ok(())
+    }
+
+    pub fn mmio_read(
+        &mut self,
+        width: AccessWidth,
+        address: u64,
+    ) -> Result<u64, TransportError<Link::Error>> {
+        self.ensure_active()?;
+        let sequence = self.sequence;
+        self.link
+            .send_record(
+                Record::mmio_read(self.graph_id, self.request_id, sequence, width, address)
+                    .encode(),
+            )
+            .map_err(TransportError::Link)?;
+        let response = self.receive_matching(Opcode::ReadResult, sequence)?;
+        if response.access_width() != Some(width) || response.argument0 != address {
+            return Err(TransportError::UnexpectedResponse {
+                expected: Opcode::ReadResult,
+                actual: response.opcode,
+                sequence,
+            });
+        }
+        self.advance()?;
+        Ok(response.argument1)
+    }
+
+    pub fn end_job(&mut self) -> Result<u64, TransportError<Link::Error>> {
+        self.ensure_active()?;
+        let sequence = self.sequence;
+        self.link
+            .send_record(Record::end_job(self.graph_id, self.request_id, sequence).encode())
+            .map_err(TransportError::Link)?;
+        let response = self.receive_matching(Opcode::Completion, sequence)?;
+        self.active = false;
+        if response.argument0 != CompletionCode::Success as u64 {
+            return Err(TransportError::CompletionFailed {
+                sequence,
+                code: response.argument0,
+                completed_operations: response.argument1,
+            });
+        }
+        if response.argument1 != self.operations {
+            return Err(TransportError::CompletionCount {
+                expected: self.operations,
+                actual: response.argument1,
+            });
+        }
+        Ok(response.argument1)
+    }
+
+    fn ensure_active(&self) -> Result<(), TransportError<Link::Error>> {
+        if self.active {
+            Ok(())
+        } else {
+            Err(TransportError::Inactive)
+        }
+    }
+
+    fn advance(&mut self) -> Result<(), TransportError<Link::Error>> {
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or(TransportError::SequenceOverflow)?;
+        self.operations = self
+            .operations
+            .checked_add(1)
+            .ok_or(TransportError::SequenceOverflow)?;
+        Ok(())
+    }
+
+    fn receive_matching(
+        &mut self,
+        expected_opcode: Opcode,
+        expected_sequence: u32,
+    ) -> Result<Record, TransportError<Link::Error>> {
+        for _ in 0..MAX_STALE_RESPONSES {
+            let bytes = self.link.receive_record().map_err(TransportError::Link)?;
+            let response = Record::decode(&bytes)?;
+            if response.graph_id != self.graph_id || response.request_id != self.request_id {
+                continue;
+            }
+            if response.opcode == Opcode::Error {
+                return Err(TransportError::RemoteError {
+                    sequence: response.sequence,
+                    code: response.argument0,
+                    detail: response.argument1,
+                });
+            }
+            if response.opcode == Opcode::Completion && expected_opcode != Opcode::Completion {
+                return Err(TransportError::CompletionFailed {
+                    sequence: response.sequence,
+                    code: response.argument0,
+                    completed_operations: response.argument1,
+                });
+            }
+            if response.sequence != expected_sequence {
+                continue;
+            }
+            if response.opcode != expected_opcode {
+                return Err(TransportError::UnexpectedResponse {
+                    expected: expected_opcode,
+                    actual: response.opcode,
+                    sequence: expected_sequence,
+                });
+            }
+            return Ok(response);
+        }
+        Err(TransportError::StaleResponseLimit)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DecodeError {
     BadMagic,
@@ -409,5 +698,124 @@ mod tests {
         let mut bytes = Record::completion(GRAPH_ID, 1, 0, CompletionCode::Success, 0).encode();
         bytes[6..8].copy_from_slice(&0_u16.to_le_bytes());
         assert_eq!(Record::decode(&bytes), Err(DecodeError::InvalidFlags(0)));
+    }
+
+    #[derive(Default)]
+    struct MockLink {
+        sent: Vec<[u8; RECORD_BYTES]>,
+        responses: std::collections::VecDeque<[u8; RECORD_BYTES]>,
+    }
+
+    impl RecordLink for MockLink {
+        type Error = &'static str;
+
+        fn send_record(&mut self, record: [u8; RECORD_BYTES]) -> Result<(), Self::Error> {
+            self.sent.push(record);
+            Ok(())
+        }
+
+        fn receive_record(&mut self) -> Result<[u8; RECORD_BYTES], Self::Error> {
+            self.responses.pop_front().ok_or("response queue empty")
+        }
+    }
+
+    #[test]
+    fn native_transport_preserves_order_and_ignores_stale_responses() {
+        let mut link = MockLink::default();
+        link.responses.push_back(
+            Record::read_result(GRAPH_ID, 99, 2, AccessWidth::Word, 0x24, 0xdead).encode(),
+        );
+        link.responses.push_back(
+            Record::read_result(GRAPH_ID, 7, 2, AccessWidth::Word, 0x24, 0xfeed_beef).encode(),
+        );
+        link.responses
+            .push_back(Record::completion(GRAPH_ID, 7, 3, CompletionCode::Success, 2).encode());
+
+        let mut transport = QshellMmioTransport::new(link, GRAPH_ID);
+        transport.begin_job(7, UNBOUNDED_OPERATIONS).unwrap();
+        transport
+            .mmio_write(AccessWidth::DoubleWord, 0x1000, 0x1234)
+            .unwrap();
+        assert_eq!(
+            transport.mmio_read(AccessWidth::Word, 0x24).unwrap(),
+            0xfeed_beef
+        );
+        assert_eq!(transport.end_job().unwrap(), 2);
+        assert!(!transport.is_active());
+
+        let link = transport.into_inner();
+        let sent: Vec<_> = link
+            .sent
+            .iter()
+            .map(|bytes| Record::decode(bytes).unwrap())
+            .collect();
+        assert_eq!(
+            sent[0],
+            Record::begin_job(GRAPH_ID, 7, UNBOUNDED_OPERATIONS)
+        );
+        assert_eq!(sent[0].sequence, 0);
+        assert_eq!(sent[1].opcode, Opcode::MmioWrite);
+        assert_eq!(sent[1].sequence, 1);
+        assert_eq!(sent[2].opcode, Opcode::MmioRead);
+        assert_eq!(sent[2].sequence, 2);
+        assert_eq!(sent[3], Record::end_job(GRAPH_ID, 7, 3));
+    }
+
+    #[test]
+    fn native_transport_surfaces_remote_and_malformed_responses() {
+        let mut link = MockLink::default();
+        link.responses
+            .push_back(Record::error(GRAPH_ID, 8, 1, ErrorCode::AcceleratorFault, 2).encode());
+        let mut transport = QshellMmioTransport::new(link, GRAPH_ID);
+        transport.begin_job(8, UNBOUNDED_OPERATIONS).unwrap();
+        assert!(matches!(
+            transport.mmio_read(AccessWidth::DoubleWord, 0x100),
+            Err(TransportError::RemoteError {
+                sequence: 1,
+                code: 7,
+                detail: 2
+            })
+        ));
+
+        let mut link = MockLink::default();
+        let mut malformed =
+            Record::read_result(GRAPH_ID, 9, 1, AccessWidth::DoubleWord, 0x100, 0).encode();
+        malformed[0] = 0;
+        link.responses.push_back(malformed);
+        let mut transport = QshellMmioTransport::new(link, GRAPH_ID);
+        transport.begin_job(9, UNBOUNDED_OPERATIONS).unwrap();
+        assert!(matches!(
+            transport.mmio_read(AccessWidth::DoubleWord, 0x100),
+            Err(TransportError::Decode(DecodeError::BadMagic))
+        ));
+    }
+
+    #[test]
+    fn native_transport_rejects_stale_response_flood_and_bad_completion_count() {
+        let mut link = MockLink::default();
+        for request_id in 100..100 + MAX_STALE_RESPONSES as u32 {
+            link.responses.push_back(
+                Record::read_result(GRAPH_ID, request_id, 1, AccessWidth::Byte, 0, 0).encode(),
+            );
+        }
+        let mut transport = QshellMmioTransport::new(link, GRAPH_ID);
+        transport.begin_job(10, UNBOUNDED_OPERATIONS).unwrap();
+        assert!(matches!(
+            transport.mmio_read(AccessWidth::Byte, 0),
+            Err(TransportError::StaleResponseLimit)
+        ));
+
+        let mut link = MockLink::default();
+        link.responses
+            .push_back(Record::completion(GRAPH_ID, 11, 1, CompletionCode::Success, 4).encode());
+        let mut transport = QshellMmioTransport::new(link, GRAPH_ID);
+        transport.begin_job(11, UNBOUNDED_OPERATIONS).unwrap();
+        assert!(matches!(
+            transport.end_job(),
+            Err(TransportError::CompletionCount {
+                expected: 0,
+                actual: 4
+            })
+        ));
     }
 }

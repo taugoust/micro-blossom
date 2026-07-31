@@ -1307,6 +1307,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "micro-blossom-nostd",
+ "microblossom-qshell-protocol",
  "mwmatching",
  "nonzero",
  "num_cpus",
@@ -1344,6 +1345,10 @@ dependencies = [
  "panic-halt",
  "serde",
 ]
+
+[[package]]
+name = "microblossom-qshell-protocol"
+version = "0.1.0"
 
 [[package]]
 name = "mime"

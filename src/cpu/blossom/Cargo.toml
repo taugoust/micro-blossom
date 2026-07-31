@@ -51,6 +51,7 @@ lazy_static = "1.4.0"
 petgraph = "0.6.4"
 qecp = { version = "0.2.7" }
 fusion-blossom = { version = "0.2.12" }
+microblossom-qshell-protocol = { path = "../../qshell/protocol" }
 micro-blossom-nostd = { path = "../blossom-nostd", features = [
     "std",
     "obstacle_potentially_outdated",

@@ -9,6 +9,7 @@ pub mod dual_module_comb_edge;
 pub mod dual_module_comb_offloading;
 pub mod dual_module_comb_vertex;
 pub mod dual_module_looper;
+pub mod dual_module_qshell;
 pub mod dual_module_scala;
 pub mod example_codes;
 pub mod mwpm_solver;

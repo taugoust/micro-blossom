@@ -53,8 +53,10 @@
           settings.formatter.nixfmt.includes = [ "*.nix" ];
           settings.formatter.rustfmt.includes = nixpkgs.lib.mkForce [
             "src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs"
+            "src/cpu/blossom/src/dual_module_qshell.rs"
             "src/cpu/blossom/src/util.rs"
             "src/cpu/blossom/tests/nix_d3_golden.rs"
+            "src/cpu/blossom/tests/nix_d3_qshell_golden.rs"
             "src/cpu/embedded/build.rs"
             "src/qshell/**/*.rs"
           ];
@@ -85,6 +87,7 @@
               ./src/cpu/blossom
               ./src/cpu/blossom-nostd
               ./src/cpu/embedded
+              ./src/qshell/protocol
             ];
           };
 
@@ -341,6 +344,46 @@
             }
           );
 
+          d3QshellGoldenDecode = craneLib.mkCargoDerivation (
+            hostCommonArgs
+            // {
+              pname = "microblossom-d3-qshell-golden-decode";
+              cargoArtifacts = hostCargoArtifacts;
+              nativeBuildInputs = [
+                pkgs.coreutils
+                pkgs.gnumake
+                pkgs.jdk11
+                pkgs.stdenv.cc
+                verilator_5_014
+              ];
+              buildPhaseCargoCommand = "cargo test --profile release --locked --test nix_d3_qshell_golden --no-run";
+              doCheck = true;
+              checkPhaseCargoCommand = ''
+                export JAVA=${pkgs.jdk11}/bin/java
+                export MICROBLOSSOM_SCALA_JAR=${microblossomScala}/share/java/microblossom.jar
+                export MICROBLOSSOM_SIM_WORKDIR="$TMPDIR/sim"
+                export MICROBLOSSOM_JAVA_HEAP=4G
+                mkdir -p "$MICROBLOSSOM_SIM_WORKDIR"
+
+                timeout 600 cargo test --profile release --locked \
+                  --test nix_d3_qshell_golden -- --nocapture 2>&1 | tee "$TMPDIR/golden.log"
+                grep -F 'NIX_D3_QSHELL_GOLDEN defects=[0] correction_edges=[2] total_weight=2' \
+                  "$TMPDIR/golden.log" >/dev/null
+              '';
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = ''
+                mkdir -p "$out"
+                cp "$TMPDIR/golden.log" "$out/golden.log"
+                verilator --version > "$out/verilator-version.txt"
+              '';
+              meta = {
+                description = "Golden d3 decode through the native QShell record transport";
+                license = lib.licenses.mit;
+                platforms = systems;
+              };
+            }
+          );
+
           d3Fixture =
             pkgs.runCommand "microblossom-code-capacity-repetition-d3-v1"
               {
@@ -463,6 +506,7 @@
           microblossom-qshell-protocol = microblossomQshellProtocol;
           microblossom-d3-sim-runner = microblossomD3SimRunner;
           microblossom-d3-golden-decode = d3GoldenDecode;
+          microblossom-d3-qshell-golden-decode = d3QshellGoldenDecode;
           microblossom-d3-graph = d3Fixture;
           microblossom-d3-rtl = d3Rtl;
           verilator-5_014 = verilator_5_014;
@@ -485,6 +529,27 @@
           formatting = (treefmtEval system).config.build.check self;
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
+          d3-qshell-golden-decode = self.packages.${system}.microblossom-d3-qshell-golden-decode;
+
+          qshell-frontend =
+            pkgs.runCommand "microblossom-qshell-frontend"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                mkdir -p "$out"
+                verilator --binary --timing --assert -Wno-fatal \
+                  --top-module tb \
+                  ${./src/qshell/rtl/microblossom_qshell_frontend.sv} \
+                  ${./src/qshell/tests/microblossom_qshell_frontend_tb.sv}
+                ./obj_dir/Vtb 2>&1 | tee "$out/test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_FRONTEND_PASS' "$out/test.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+              '';
 
           rust-package-contract = pkgs.runCommand "microblossom-rust-package-contract" { } ''
             test -x ${host}/bin/micro_blossom

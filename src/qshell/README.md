@@ -20,7 +20,7 @@ All integers are little-endian. Every record is exactly 64 bytes.
 
 Opcodes:
 
-- `BeginJob (0x01)`: argument 0 is the expected operation count.
+- `BeginJob (0x01)`: argument 0 is the expected operation count. `UINT64_MAX` selects an unbounded streaming job when the primal algorithm cannot know its data-dependent MMIO count before execution.
 - `MmioWrite (0x02)`: argument 0 is byte address; argument 1 is write data.
 - `MmioRead (0x03)`: argument 0 is byte address.
 - `EndJob (0x04)`: closes the submitted operation sequence.
@@ -40,6 +40,16 @@ BeginJob
   → Completion or Error
 ```
 
-Every record carries the exact graph SHA-256 so a shell/application can reject operations for an incompatible generated accelerator. Request IDs may be reused only after completion. Sequence numbers begin at zero and increase monotonically within a job.
+Every record carries the exact graph SHA-256 so a shell/application can reject operations for an incompatible generated accelerator. Request IDs may be reused only after completion. Sequence numbers begin at zero and increase monotonically within a job. `BeginJob` has sequence zero; each MMIO operation and `EndJob` consumes the next sequence value. Exact-count jobs may end only after that count completes; unbounded jobs report their actual completed count.
+
+## Board-independent frontend and native transport
+
+`rtl/microblossom_qshell_frontend.sv` consumes one complete record per 512-bit AXI-stream beat and issues one single-beat 64-bit AXI4 MMIO operation at a time. It validates stream framing, protocol header/flags, graph identity, job/request state, sequence, operation count, address width, and natural alignment before touching the accelerator. Narrow writes and reads are shifted to and from the addressed AXI byte lanes. Read results, terminal completion, and structured errors remain stable under output backpressure; no later input record is accepted while an MMIO operation or response is pending.
+
+AXI errors abort the active job. A timed-out transaction emits `Completion(Timeout)` and quarantines the AXI proxy until reset because AXI does not permit a partly accepted transaction to be cancelled safely. Reset aborts any active job and clears protocol state without manufacturing a completion. This prevents a stale late AXI response from entering a later job.
+
+The Rust `QshellMmioTransport<RecordLink>` preserves synchronous native MMIO semantics while encoding and validating protocol-v1 records. It detects malformed, remote-error, failed-completion, incorrect-count, and unexpected responses. Responses for another graph or request are treated as stale and skipped up to a fixed bound; an error for the active request is surfaced even if it belongs to an earlier asynchronous write. `DualModuleQshellDriver` implements the existing primal `DualStacklessDriver`/`DualTrackedDriver` abstraction over this transport.
+
+The Nix checks cover the synthesizable frontend with Verilator 5.014 and run the canonical generated d3 accelerator through a simulation `RecordLink`. The golden decode remains `defects=[0] correction_edges=[2] total_weight=2` and currently uses 14 ordered MMIO operations.
 
 Phase 2 will retain coarse job identity and compatibility concepts, but fine-grained MMIO records will remain local between the V80 Arm CPU and accelerator rather than crossing PCIe.
