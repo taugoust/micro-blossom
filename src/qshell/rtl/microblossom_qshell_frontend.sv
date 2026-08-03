@@ -280,8 +280,6 @@ always_ff @(posedge aclk) begin
         w_done <= 1'b0;
         timeout_count <= '0;
         response_valid <= 1'b0;
-        response_data <= '0;
-        response_tid <= '0;
     end else begin
         if (response_fire) begin
             response_valid <= 1'b0;

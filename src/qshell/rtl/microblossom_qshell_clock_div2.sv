@@ -36,7 +36,7 @@ BUFGCE_DIV #(
 
 // Asynchronous assertion prevents either domain from running during parent
 // reset; deassertion is synchronized to the generated slow clock.
-logic [1:0] slow_reset_sync;
+(* ASYNC_REG = "TRUE" *) logic [1:0] slow_reset_sync;
 always_ff @(posedge slow_clk or negedge aresetn) begin
     if (!aresetn) begin
         slow_reset_sync <= 2'b00;

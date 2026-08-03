@@ -558,6 +558,7 @@
                   --arg frontendSha256 "$(sha256sum "$core/microblossom_qshell_frontend.sv" | cut -d' ' -f1)" \
                   --arg coreSha256 "$(sha256sum "$core/microblossom_qshell_core.sv" | cut -d' ' -f1)" \
                   --arg clockDividerSha256 "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" \
+                  --arg timingConstraintsSha256 "$(sha256sum ${./src/qshell/app/src/microblossom/microblossom_qshell_timing.xdc} | cut -d' ' -f1)" \
                   --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope_v2.sv" | cut -d' ' -f1)" \
                   --arg applicationSha256 "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" \
                   --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
@@ -589,6 +590,7 @@
                     frontendSha256: $frontendSha256,
                     coreSha256: $coreSha256,
                     clockDividerSha256: $clockDividerSha256,
+                    timingConstraintsSha256: $timingConstraintsSha256,
                     envelopeSha256: $envelopeSha256,
                     applicationSha256: $applicationSha256,
                     qshellAbiSha256: $qshellAbiSha256
@@ -1060,6 +1062,10 @@
                 test -s ${qshellSimulationHwSource}/src/app/microblossom/vfpga_top.svh
                 test -s "$app/vfpga_top.svh"
                 test -s "$app/init_ip.tcl"
+                test -s "$app/microblossom_qshell_timing.xdc"
+                grep -F 'set_clock_groups -name microblossom_accelerator_cdc -asynchronous' \
+                  "$app/microblossom_qshell_timing.xdc" >/dev/null
+                grep -F 'USED_IN_IMPLEMENTATION true' "$app/init_ip.tcl" >/dev/null
                 grep -F 'vfpga_src_dir/hdl' \
                   ${coyote}/scripts/cr_prjcts/cr_user.tcl.in >/dev/null
                 test ! -e "$app/microblossom_qshell_application.sv"

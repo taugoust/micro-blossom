@@ -160,12 +160,7 @@ end
 always_ff @(posedge aclk) begin
     if (!aresetn) begin
         state <= ST_FIRST;
-        request_header <= '0;
-        request_payload <= '0;
-        request_tid <= '0;
         correction_sequence <= '0;
-        response_header <= '0;
-        response_payload <= '0;
     end else begin
         case (state)
             ST_FIRST: begin
