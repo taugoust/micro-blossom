@@ -599,14 +599,16 @@
             cp -R ${./src/qshell/app}/. "$out"
             chmod -R u+w "$out"
             app="$out/src/microblossom"
+            hdl="$app/hdl"
             core=${d3QshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
-            cp "$core/MicroBlossomBus.v" "$app/"
-            cp "$core/microblossom_qshell_frontend.sv" "$app/"
-            cp "$core/microblossom_qshell_core.sv" "$app/"
-            cp "$core/microblossom_qshell_clock_div2.sv" "$app/"
-            cp "$core/microblossom_qshell_envelope_v2.sv" "$app/"
-            cp "$core/microblossom_qshell_application.sv" "$app/"
-            cp "$core/qshell_abi_generated.svh" "$app/"
+            mkdir -p "$hdl"
+            cp "$core/MicroBlossomBus.v" "$hdl/"
+            cp "$core/microblossom_qshell_frontend.sv" "$hdl/"
+            cp "$core/microblossom_qshell_core.sv" "$hdl/"
+            cp "$core/microblossom_qshell_clock_div2.sv" "$hdl/"
+            cp "$core/microblossom_qshell_envelope_v2.sv" "$hdl/"
+            cp "$core/microblossom_qshell_application.sv" "$hdl/"
+            cp "$core/qshell_abi_generated.svh" "$hdl/"
             cp "$core/core-manifest.json" "$out/"
           '';
 
@@ -627,7 +629,7 @@
               microblossom_qshell_clock_div2.sv \
               microblossom_qshell_envelope_v2.sv \
               microblossom_qshell_application.sv; do
-              printf '`include "%s"\n' "$out/src/app/microblossom/$source" >> "$vfpga"
+              printf '`include "hdl/%s"\n' "$source" >> "$vfpga"
             done
             cat "$vfpga.body" >> "$vfpga"
             rm "$vfpga.body"
@@ -1049,6 +1051,7 @@
             pkgs.runCommand "microblossom-qshell-app-source" { nativeBuildInputs = [ pkgs.jq ]; }
               ''
                 app=${qshellAppHwSource}/src/microblossom
+                hdl="$app/hdl"
                 test -s ${qshellAppHwSource}/CMakeLists.txt
                 test -s ${qshellSimulationHwSource}/CMakeLists.txt
                 grep -F 'VFPGA_C0_0 "src/app/microblossom"' \
@@ -1057,6 +1060,9 @@
                 test -s ${qshellSimulationHwSource}/src/app/microblossom/vfpga_top.svh
                 test -s "$app/vfpga_top.svh"
                 test -s "$app/init_ip.tcl"
+                grep -F 'vfpga_src_dir/hdl' \
+                  ${coyote}/scripts/cr_prjcts/cr_user.tcl.in >/dev/null
+                test ! -e "$app/microblossom_qshell_application.sv"
                 for source in \
                   MicroBlossomBus.v \
                   microblossom_qshell_frontend.sv \
@@ -1065,7 +1071,7 @@
                   microblossom_qshell_envelope_v2.sv \
                   microblossom_qshell_application.sv \
                   qshell_abi_generated.svh; do
-                  test -s "$app/$source"
+                  test -s "$hdl/$source"
                 done
                 grep -F 'load_apps(VFPGA_C0_0 "src/microblossom")' \
                   ${qshellAppHwSource}/CMakeLists.txt >/dev/null
