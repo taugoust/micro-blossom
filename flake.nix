@@ -796,13 +796,90 @@
             v80 = mkD3QshellXdbRunner "v80";
           };
 
-          d3QshellU280XdbCheck =
+          updateQshellRustAbi = pkgs.writeShellApplication {
+            name = "update-qshell-rust-abi";
+            runtimeInputs = [
+              pkgs.git
+              pkgs.python3
+            ];
+            text = ''
+              root="$(git rev-parse --show-toplevel)"
+              python3 "$root/src/qshell/tools/generate_qshell_rust_abi.py" \
+                --spec ${qshellContractSource}/abi/qshell-abi-v2.json \
+                --out "$root/src/qshell/protocol/src/qshell_abi_generated.rs"
+            '';
+          };
+        in
+        {
+          default = microblossomHost;
+          microblossom-host = microblossomHost;
+          microblossom-scala = microblossomScala;
+          microblossom-qshell-protocol = microblossomQshellProtocol;
+          microblossom-qshell-coyote-bridge = microblossomQshellCoyoteBridge;
+          microblossom-xdb-u280 = microblossomXdb.u280;
+          microblossom-xdb-v80 = microblossomXdb.v80;
+          microblossom-qshell-u280-xdb-bridge = qshellXdbBridges.u280;
+          microblossom-qshell-v80-xdb-bridge = qshellXdbBridges.v80;
+          microblossom-d3-qshell-u280-xdb-run = qshellXdbRunners.u280;
+          microblossom-d3-qshell-v80-xdb-run = qshellXdbRunners.v80;
+          microblossom-d3-sim-runner = microblossomD3SimRunner;
+          microblossom-d3-golden-decode = d3GoldenDecode;
+          microblossom-d3-qshell-golden-decode = d3QshellGoldenDecode;
+          microblossom-d3-graph = d3Fixture;
+          microblossom-d3-rtl = d3Rtl;
+          microblossom-d3-qshell-core = d3QshellCore;
+          microblossom-d3-qshell-app-hw-source = d3QshellAppHwSource;
+          microblossom-d3-qshell-simulation-hw-source = d3QshellSimulationHwSource;
+          microblossom-d3-qshell-u280-sim = d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim";
+          microblossom-d3-qshell-v80-sim = d3QshellSimulationPackages."microblossom-d3-qshell-v80-sim";
+          microblossom-d3-qshell-u280-app = d3QshellApps.u280;
+          microblossom-d3-qshell-v80-app = d3QshellApps.v80;
+          microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
+          microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
+          update-qshell-rust-abi = updateQshellRustAbi;
+          verilator-5_014 = verilator_5_014;
+        }
+      );
+
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          coyoteNix = inputs."coyote-nix";
+          doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
+          xilinxShareRoot = doctor.xilinxShareRoot;
+          coyoteTools = coyoteNix.lib.mkTools {
+            inherit pkgs xilinxShareRoot;
+            coyoteRoot = coyote;
+            platforms = systems;
+          };
+          qshellLib = qshell.lib.${system};
+          verilator_5_014 = mkVerilator_5_014 pkgs;
+          host = self.packages.${system}.microblossom-host;
+          fixture = self.packages.${system}.microblossom-d3-graph;
+          protocol = self.packages.${system}.microblossom-qshell-protocol;
+          coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
+          scala = self.packages.${system}.microblossom-scala;
+          simRunner = self.packages.${system}.microblossom-d3-sim-runner;
+          rtl = self.packages.${system}.microblossom-d3-rtl;
+          qshellCore = self.packages.${system}.microblossom-d3-qshell-core;
+          qshellAppHwSource = self.packages.${system}.microblossom-d3-qshell-app-hw-source;
+          qshellSimulationHwSource = self.packages.${system}.microblossom-d3-qshell-simulation-hw-source;
+          qshellXdbBridge = self.packages.${system}.microblossom-qshell-u280-xdb-bridge;
+          qshellU280Simulation = self.packages.${system}.microblossom-d3-qshell-u280-sim;
+          qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
+          qshellContractSource = qshell.lib.${system}.qshellContractSource;
+        in
+        {
+          formatting = (treefmtEval system).config.build.check self;
+          qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
+          qshell-u280-xdb-d3 =
             pkgs.runCommand "microblossom-d3-qshell-u280-xdb-check"
               {
                 nativeBuildInputs = [
                   coyoteTools.vivado
                   doctor.xilinxShell
-                  microblossomHost
+                  host
                   pkgs.jq
                   qshell.packages.${system}.qshell-xdb-u280
                 ];
@@ -828,13 +905,13 @@
                 trap cleanup EXIT
 
                 if ! qshell-xdb-u280 --debug sim launch \
-                  ${d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim"}; then
+                  ${qshellU280Simulation}; then
                   find "$XDB_SIM_WORKSPACE" "$XDB_ROOT" -type f \
                     \( -name '*.log' -o -name '*.jou' \) -print -exec tail -n 200 '{}' \;
                   exit 1
                 fi
                 if ! microblossom_d3_qshell_coyote \
-                  --bridge ${qshellXdbBridges.u280}/bin/microblossom-qshell-u280-xdb-bridge \
+                  --bridge ${qshellXdbBridge}/bin/microblossom-qshell-u280-xdb-bridge \
                   --timeout-ms 30000 \
                   2>&1 | tee "$out/workload.log"; then
                   qshell-xdb-u280 sim time || true
@@ -887,76 +964,6 @@
                 cleanup
                 trap - EXIT
               '';
-
-          updateQshellRustAbi = pkgs.writeShellApplication {
-            name = "update-qshell-rust-abi";
-            runtimeInputs = [
-              pkgs.git
-              pkgs.python3
-            ];
-            text = ''
-              root="$(git rev-parse --show-toplevel)"
-              python3 "$root/src/qshell/tools/generate_qshell_rust_abi.py" \
-                --spec ${qshellContractSource}/abi/qshell-abi-v2.json \
-                --out "$root/src/qshell/protocol/src/qshell_abi_generated.rs"
-            '';
-          };
-        in
-        {
-          default = microblossomHost;
-          microblossom-host = microblossomHost;
-          microblossom-scala = microblossomScala;
-          microblossom-qshell-protocol = microblossomQshellProtocol;
-          microblossom-qshell-coyote-bridge = microblossomQshellCoyoteBridge;
-          microblossom-xdb-u280 = microblossomXdb.u280;
-          microblossom-xdb-v80 = microblossomXdb.v80;
-          microblossom-qshell-u280-xdb-bridge = qshellXdbBridges.u280;
-          microblossom-qshell-v80-xdb-bridge = qshellXdbBridges.v80;
-          microblossom-d3-qshell-u280-xdb-run = qshellXdbRunners.u280;
-          microblossom-d3-qshell-v80-xdb-run = qshellXdbRunners.v80;
-          microblossom-d3-qshell-u280-xdb-check = d3QshellU280XdbCheck;
-          microblossom-d3-sim-runner = microblossomD3SimRunner;
-          microblossom-d3-golden-decode = d3GoldenDecode;
-          microblossom-d3-qshell-golden-decode = d3QshellGoldenDecode;
-          microblossom-d3-graph = d3Fixture;
-          microblossom-d3-rtl = d3Rtl;
-          microblossom-d3-qshell-core = d3QshellCore;
-          microblossom-d3-qshell-app-hw-source = d3QshellAppHwSource;
-          microblossom-d3-qshell-simulation-hw-source = d3QshellSimulationHwSource;
-          microblossom-d3-qshell-u280-sim = d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim";
-          microblossom-d3-qshell-v80-sim = d3QshellSimulationPackages."microblossom-d3-qshell-v80-sim";
-          microblossom-d3-qshell-u280-app = d3QshellApps.u280;
-          microblossom-d3-qshell-v80-app = d3QshellApps.v80;
-          microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
-          microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
-          update-qshell-rust-abi = updateQshellRustAbi;
-          verilator-5_014 = verilator_5_014;
-        }
-      );
-
-      checks = forAllSystems (
-        system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-          verilator_5_014 = mkVerilator_5_014 pkgs;
-          host = self.packages.${system}.microblossom-host;
-          fixture = self.packages.${system}.microblossom-d3-graph;
-          protocol = self.packages.${system}.microblossom-qshell-protocol;
-          coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
-          scala = self.packages.${system}.microblossom-scala;
-          simRunner = self.packages.${system}.microblossom-d3-sim-runner;
-          rtl = self.packages.${system}.microblossom-d3-rtl;
-          qshellCore = self.packages.${system}.microblossom-d3-qshell-core;
-          qshellAppHwSource = self.packages.${system}.microblossom-d3-qshell-app-hw-source;
-          qshellSimulationHwSource = self.packages.${system}.microblossom-d3-qshell-simulation-hw-source;
-          qshellXdbBridge = self.packages.${system}.microblossom-qshell-u280-xdb-bridge;
-          qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
-          qshellContractSource = qshell.lib.${system}.qshellContractSource;
-        in
-        {
-          formatting = (treefmtEval system).config.build.check self;
-          qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
-          qshell-u280-xdb-d3 = self.packages.${system}.microblossom-d3-qshell-u280-xdb-check;
 
           qshell-coyote-bridge = pkgs.runCommand "microblossom-qshell-coyote-bridge-check" { } ''
             ${coyoteBridge}/bin/microblossom-qshell-coyote-bridge --self-test \

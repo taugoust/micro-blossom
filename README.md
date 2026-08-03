@@ -78,7 +78,6 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed application/partial-image packages;
 - `microblossom-d3-qshell-{u280,v80}-sim`: packaged Coyote/QShell behavioral simulation runtimes;
 - `microblossom-d3-qshell-{u280,v80}-xdb-run`: canonical host workload runners for active xdb sessions;
-- `microblossom-d3-qshell-u280-xdb-check`: reproducible U280 xdb workload check with status, provenance, and debug-bundle evidence;
 - `microblossom-d3-sim-runner`: native half of the packaged Rust/Scala/Verilator accelerator smoke;
 - `microblossom-d3-golden-decode`: a full d3 primal/AXI4-dual decode checked against the serial reference solver;
 - `microblossom-d3-qshell-golden-decode`: the same canonical decode through ordered protocol-v1 records and the native QShell MMIO transport;
