@@ -22,6 +22,7 @@ class OneMem[T <: Data](val wordType: HardType[T], val wordCount: Int, val asser
     extends Bundle {
   var mem: Mem[T] = null
   var register: T = Reg(cloneOf(wordType)).allowPruning()
+  var registerInitialValue: T = null.asInstanceOf[T]
   var portCount = 0
 
   if (wordCount != 1) {
@@ -33,7 +34,8 @@ class OneMem[T <: Data](val wordType: HardType[T], val wordCount: Int, val asser
   def init(initialContent: Seq[T]): this.type = {
     assert(initialContent.length == wordCount)
     if (wordCount == 1) {
-      register.init(initialContent(0))
+      registerInitialValue = initialContent(0)
+      register.init(registerInitialValue)
     } else {
       mem.init(initialContent)
     }
@@ -58,11 +60,15 @@ class OneMem[T <: Data](val wordType: HardType[T], val wordCount: Int, val asser
       assert(address.getBitsWidth == 0)
       assert(readUnderWrite == dontCare)
       assert(clockCrossing == false)
-      if (enable == null) {
+      val readData = if (enable == null) {
         RegNext(register)
       } else {
         RegNextWhen(register, enable)
       }
+      if (registerInitialValue != null) {
+        readData.init(registerInitialValue)
+      }
+      readData
     } else {
       mem.readSync(address, enable, readUnderWrite, clockCrossing)
     }
@@ -105,7 +111,11 @@ class OneMem[T <: Data](val wordType: HardType[T], val wordCount: Int, val asser
       when(enable && write) {
         register := data
       }
-      RegNextWhen(register, enable)
+      val readData = RegNextWhen(register, enable)
+      if (registerInitialValue != null) {
+        readData.init(registerInitialValue)
+      }
+      readData
     } else {
       mem.readWriteSync(address, data, enable, write, mask, readUnderWrite, clockCrossing, duringWrite)
     }

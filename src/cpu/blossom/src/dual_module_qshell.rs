@@ -15,8 +15,8 @@ use micro_blossom_nostd::instruction::*;
 use micro_blossom_nostd::interface::*;
 use micro_blossom_nostd::util::*;
 use microblossom_qshell_protocol::{
-    AccessWidth, CompletionCode, GraphId, Opcode, QshellMmioTransport, Record, RecordLink, TransportError,
-    UNBOUNDED_OPERATIONS,
+    AccessWidth, CompletionCode, CoyoteProcessBeatLink, GraphId, Opcode, QshellMmioTransport, QshellV2RecordLink,
+    QshellV2Route, Record, RecordLink, TransportError, UNBOUNDED_OPERATIONS,
 };
 use scan_fmt::*;
 use serde::*;
@@ -360,6 +360,107 @@ fn decode_graph_id(value: &str) -> io::Result<GraphId> {
 pub type DualModuleQshellSimulationDriver = DualModuleQshellDriver<SimulationRecordLink>;
 pub type DualModuleQshell = DualModuleStackless<DualDriverTracked<DualModuleQshellSimulationDriver, MAX_NODE_NUM>>;
 pub type SolverEmbeddedQshell = SolverEmbeddedBoxed<DualModuleQshellSimulationDriver>;
+
+pub type CoyoteQshellRecordLink = QshellV2RecordLink<CoyoteProcessBeatLink>;
+
+/// Concrete native driver used by the packaged Coyote and xdb process bridges.
+pub struct CoyoteQshellDriver {
+    pub driver: DualModuleQshellDriver<CoyoteQshellRecordLink>,
+}
+
+impl CoyoteQshellDriver {
+    pub fn finish_job(&mut self) -> io::Result<u64> {
+        self.driver.finish_job()
+    }
+
+    pub fn operations(&self) -> u64 {
+        self.driver.transport.operations()
+    }
+}
+
+impl DualStacklessDriver for CoyoteQshellDriver {
+    fn reset(&mut self) {
+        self.driver.reset();
+    }
+
+    fn set_speed(&mut self, is_blossom: bool, node: CompactNodeIndex, speed: CompactGrowState) {
+        self.driver.set_speed(is_blossom, node, speed);
+    }
+
+    fn set_blossom(&mut self, node: CompactNodeIndex, blossom: CompactNodeIndex) {
+        self.driver.set_blossom(node, blossom);
+    }
+
+    fn find_obstacle(&mut self) -> (CompactObstacle, CompactWeight) {
+        self.driver.find_obstacle()
+    }
+
+    fn add_defect(&mut self, vertex: CompactVertexIndex, node: CompactNodeIndex) {
+        self.driver.add_defect(vertex, node);
+    }
+}
+
+impl DualTrackedDriver for CoyoteQshellDriver {
+    fn find_conflict(&mut self, maximum_growth: CompactWeight) -> (CompactObstacle, CompactWeight) {
+        self.driver.find_conflict(maximum_growth)
+    }
+}
+
+impl FusionVisualizer for CoyoteQshellDriver {
+    fn snapshot(&self, abbrev: bool) -> serde_json::Value {
+        self.driver.snapshot(abbrev)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DualQshellCoyoteConfig {
+    bridge_executable: String,
+    graph_sha256: String,
+    request_id: u32,
+    context_id: u32,
+    initial_round_id: u32,
+    source_endpoint_id: u32,
+    route_capability_id: u32,
+    expected_decoder_endpoint_id: Option<u32>,
+    #[serde(default)]
+    vfpga_id: i32,
+    #[serde(default = "default_coyote_timeout_ms")]
+    timeout_ms: u64,
+}
+
+fn default_coyote_timeout_ms() -> u64 {
+    10_000
+}
+
+impl SolverTrackedDual for CoyoteQshellDriver {
+    fn new_from_graph_config(_graph: MicroBlossomSingle, config: serde_json::Value) -> Self {
+        let config: DualQshellCoyoteConfig = serde_json::from_value(config).unwrap();
+        let graph_id = decode_graph_id(&config.graph_sha256).unwrap();
+        let beats = CoyoteProcessBeatLink::spawn(&config.bridge_executable, config.vfpga_id, config.timeout_ms).unwrap();
+        let records = QshellV2RecordLink::new(
+            beats,
+            QshellV2Route {
+                context_id: config.context_id,
+                initial_round_id: config.initial_round_id,
+                source_endpoint_id: config.source_endpoint_id,
+                route_capability_id: config.route_capability_id,
+                expected_decoder_endpoint_id: config.expected_decoder_endpoint_id,
+            },
+        );
+        Self {
+            driver: DualModuleQshellDriver::new(records, graph_id, config.request_id).unwrap(),
+        }
+    }
+
+    fn fuse_layer(&mut self, layer_id: usize) {
+        self.driver
+            .execute_instruction(Instruction32::load_syndrome_external(ni!(layer_id)))
+            .unwrap();
+    }
+}
+
+pub type SolverEmbeddedQshellCoyote = SolverEmbeddedBoxed<CoyoteQshellDriver>;
 
 impl SolverTrackedDual for DualModuleQshellSimulationDriver {
     fn new_from_graph_config(graph: MicroBlossomSingle, config: serde_json::Value) -> Self {

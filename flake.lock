@@ -795,7 +795,19 @@
     },
     "root": {
       "inputs": {
+        "coyote": [
+          "qshell",
+          "coyote"
+        ],
+        "coyote-nix": [
+          "qshell",
+          "coyote-nix"
+        ],
         "crane": "crane",
+        "doctor-cluster-xilinx": [
+          "qshell",
+          "doctor-cluster-xilinx"
+        ],
         "fenix": "fenix",
         "nixpkgs": "nixpkgs",
         "qshell": "qshell",

@@ -16,16 +16,20 @@
       url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=qs0-contracts-reference-model&rev=9ba6d34d5e404faadb9c4d99afe49a9285a6b880";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    coyote.follows = "qshell/coyote";
+    coyote-nix.follows = "qshell/coyote-nix";
+    doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
   };
 
   outputs =
-    {
+    inputs@{
       self,
       nixpkgs,
       crane,
       fenix,
       treefmt-nix,
       qshell,
+      coyote,
       ...
     }:
     let
@@ -58,6 +62,7 @@
           settings.formatter.nixfmt.includes = [ "*.nix" ];
           settings.formatter.rustfmt.includes = nixpkgs.lib.mkForce [
             "src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs"
+            "src/cpu/blossom/src/bin/microblossom_d3_qshell_coyote.rs"
             "src/cpu/blossom/src/dual_module_qshell.rs"
             "src/cpu/blossom/src/util.rs"
             "src/cpu/blossom/tests/nix_d3_golden.rs"
@@ -79,6 +84,14 @@
           qshellAbiSource = qshellLib.qshellAbiSource;
           qshellContractSource = qshellLib.qshellContractSource;
           qshellHostPackage = qshell.packages.${system}.qshell-host;
+          coyoteNix = inputs."coyote-nix";
+          doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
+          xilinxShareRoot = doctor.xilinxShareRoot;
+          coyoteTools = coyoteNix.lib.mkTools {
+            inherit pkgs xilinxShareRoot;
+            coyoteRoot = coyote;
+            platforms = systems;
+          };
 
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
@@ -261,8 +274,9 @@
             }
           );
 
-          hostCargoExtraArgs = "--locked --bin micro_blossom --bin generate_nix_d3_fixture";
-          simulatorCargoExtraArgs = "${hostCargoExtraArgs} --bin embedded_simulator";
+          baseHostCargoExtraArgs = "--locked --bin micro_blossom --bin generate_nix_d3_fixture";
+          hostCargoExtraArgs = "${baseHostCargoExtraArgs} --bin microblossom_d3_qshell_coyote";
+          simulatorCargoExtraArgs = "${baseHostCargoExtraArgs} --bin embedded_simulator";
 
           microblossomHost = craneLib.buildPackage (
             hostCommonArgs
@@ -274,6 +288,8 @@
                 install -Dm755 target/release/micro_blossom "$out/bin/micro_blossom"
                 install -Dm755 target/release/generate_nix_d3_fixture \
                   "$out/bin/generate_nix_d3_fixture"
+                install -Dm755 target/release/microblossom_d3_qshell_coyote \
+                  "$out/bin/microblossom_d3_qshell_coyote"
               '';
 
               meta = {
@@ -594,6 +610,60 @@
             cp "$core/core-manifest.json" "$out/"
           '';
 
+          d3QshellSimulationHwSource = pkgs.runCommand "microblossom-d3-qshell-simulation-hw-source-v1" { } ''
+            cp -R ${qshellLib.qshellShellHwSource}/. "$out"
+            chmod -R u+w "$out"
+            rm -rf "$out/src/app/service"
+            mkdir -p "$out/src/app/microblossom"
+            cp -R ${d3QshellAppHwSource}/src/microblossom/. \
+              "$out/src/app/microblossom/"
+            vfpga="$out/src/app/microblossom/vfpga_top.svh"
+            mv "$vfpga" "$vfpga.body"
+            printf '`define MICROBLOSSOM_SIM_CLOCK_DIVIDER\n' > "$vfpga"
+            for source in \
+              MicroBlossomBus.v \
+              microblossom_qshell_frontend.sv \
+              microblossom_qshell_core.sv \
+              microblossom_qshell_clock_div2.sv \
+              microblossom_qshell_envelope_v2.sv \
+              microblossom_qshell_application.sv; do
+              printf '`include "%s"\n' "$out/src/app/microblossom/$source" >> "$vfpga"
+            done
+            cat "$vfpga.body" >> "$vfpga"
+            rm "$vfpga.body"
+            substituteInPlace "$out/CMakeLists.txt" \
+              --replace-fail \
+                'VFPGA_C0_0 "src/app/service src/abi"' \
+                'VFPGA_C0_0 "src/app/microblossom"'
+            cp ${d3QshellAppHwSource}/core-manifest.json "$out/"
+          '';
+
+          d3QshellSimulationPackages = coyoteNix.lib.mkCoyoteBoardPackages {
+            inherit pkgs xilinxShareRoot;
+            tools = coyoteTools;
+            coyoteRoot = coyote;
+            xilinxShell = doctor.xilinxShell;
+            hwSource = d3QshellSimulationHwSource;
+            pnamePrefix = "microblossom-d3-qshell-simulation";
+            projectName = "qshell-fpga";
+            version = "0.1.0";
+            boards = lib.mapAttrs (
+              board: cfg:
+              cfg
+              // {
+                simPname = "microblossom-d3-qshell-${board}-sim";
+                simCmakeFlags = [
+                  "-DBUILD_APP:STRING=0"
+                  "-DBUILD_STATIC:STRING=0"
+                  "-DBUILD_SHELL:STRING=1"
+                  "-DEN_PR:STRING=1"
+                  "-DEN_SHELL_PBLOCK:STRING=${if board == "u280" then "1" else "0"}"
+                  "-DSIM_EXTERNAL_DYNAMIC_SERVICE:STRING=1"
+                ];
+              }
+            ) qshellLib.boards;
+          };
+
           mkD3QshellApp =
             board:
             qshellLib.mkQshellAppPackage {
@@ -647,6 +717,177 @@
             };
           };
 
+          mkMicroblossomXdb =
+            board:
+            let
+              qshellXdb = qshell.packages.${system}."qshell-xdb-${board}";
+            in
+            pkgs.writeShellApplication {
+              name = "microblossom-xdb-${board}";
+              runtimeInputs = [
+                pkgs.git
+                qshellXdb
+              ];
+              text = ''
+                repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+                export XDB_ROOT="''${XDB_ROOT:-$repo_root/.xdb}"
+                export XDB_SIM_WORKSPACE="''${XDB_SIM_WORKSPACE:-$repo_root/.build/xdb-microblossom-${board}}"
+                export XDB_SIM_SESSION="''${XDB_SIM_SESSION:-microblossom-${board}}"
+                exec ${qshellXdb}/bin/qshell-xdb-${board} "$@"
+              '';
+              meta = {
+                description = "Pinned xdb wrapper for MicroBlossom ${board} simulation";
+                license = lib.licenses.mit;
+                platforms = systems;
+                mainProgram = "microblossom-xdb-${board}";
+              };
+            };
+
+          microblossomXdb = {
+            u280 = mkMicroblossomXdb "u280";
+            v80 = mkMicroblossomXdb "v80";
+          };
+
+          mkQshellXdbBridge =
+            board:
+            let
+              qshellXdb = microblossomXdb.${board};
+            in
+            pkgs.writeShellApplication {
+              name = "microblossom-qshell-${board}-xdb-bridge";
+              runtimeInputs = [ pkgs.python3 ];
+              text = ''
+                exec python3 ${./src/qshell/host/microblossom_qshell_xdb_bridge.py} \
+                  --xdb ${qshellXdb}/bin/microblossom-xdb-${board} "$@"
+              '';
+              meta = {
+                description = "xdb simulation beat bridge for MicroBlossom QShell on ${board}";
+                license = lib.licenses.mit;
+                platforms = systems;
+                mainProgram = "microblossom-qshell-${board}-xdb-bridge";
+              };
+            };
+
+          qshellXdbBridges = {
+            u280 = mkQshellXdbBridge "u280";
+            v80 = mkQshellXdbBridge "v80";
+          };
+
+          mkD3QshellXdbRunner =
+            board:
+            pkgs.writeShellApplication {
+              name = "microblossom-d3-qshell-${board}-xdb-run";
+              runtimeInputs = [ microblossomHost ];
+              text = ''
+                exec microblossom_d3_qshell_coyote \
+                  --bridge ${qshellXdbBridges.${board}}/bin/microblossom-qshell-${board}-xdb-bridge \
+                  "$@"
+              '';
+              meta = {
+                description = "Canonical d3 MicroBlossom workload for an active ${board} xdb session";
+                license = lib.licenses.mit;
+                platforms = systems;
+                mainProgram = "microblossom-d3-qshell-${board}-xdb-run";
+              };
+            };
+
+          qshellXdbRunners = {
+            u280 = mkD3QshellXdbRunner "u280";
+            v80 = mkD3QshellXdbRunner "v80";
+          };
+
+          d3QshellU280XdbCheck =
+            pkgs.runCommand "microblossom-d3-qshell-u280-xdb-check"
+              {
+                nativeBuildInputs = [
+                  coyoteTools.vivado
+                  doctor.xilinxShell
+                  microblossomHost
+                  pkgs.jq
+                  qshell.packages.${system}.qshell-xdb-u280
+                ];
+                COYOTE_NIX_XILINX_SHELL = "${doctor.xilinxShell}/bin/xilinx-shell";
+                COYOTE_NIX_XILINX_SHARE_ROOT = toString xilinxShareRoot;
+                COYOTE_NIX_XILINX_VERSION = qshellLib.boards.u280.simXilinxVersion;
+                COYOTE_NIX_NCURSES6_LIB = "${pkgs.ncurses6}/lib/libtinfo.so.6";
+                __impureHostDeps = [ (toString xilinxShareRoot) ];
+              }
+              ''
+                mkdir -p "$out" "$TMPDIR/home" "$TMPDIR/xdb" "$TMPDIR/workspace"
+                export HOME="$TMPDIR/home"
+                export XDB_ROOT="$TMPDIR/xdb"
+                export XDB_SIM_WORKSPACE="$TMPDIR/workspace"
+                export XDB_SIM_SIMSET=sim_1
+                export XDB_SIM_TOP=tb_user
+                export XDB_SIM_MODE=behavioral
+                export XDB_SIM_SESSION=microblossom-u280-check
+
+                cleanup() {
+                  qshell-xdb-u280 sim close --force >/dev/null 2>&1 || true
+                }
+                trap cleanup EXIT
+
+                if ! qshell-xdb-u280 --debug sim launch \
+                  ${d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim"}; then
+                  find "$XDB_SIM_WORKSPACE" "$XDB_ROOT" -type f \
+                    \( -name '*.log' -o -name '*.jou' \) -print -exec tail -n 200 '{}' \;
+                  exit 1
+                fi
+                if ! microblossom_d3_qshell_coyote \
+                  --bridge ${qshellXdbBridges.u280}/bin/microblossom-qshell-u280-xdb-bridge \
+                  --timeout-ms 30000 \
+                  2>&1 | tee "$out/workload.log"; then
+                  qshell-xdb-u280 sim time || true
+                  qshell-xdb-u280 sim read \
+                    /tb_user/aresetn \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/slow_clk \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/slow_aresetn \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/m_axi_arvalid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/m_axi_arready \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/m_axi_rvalid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_frontend/state \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/reset \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/unburstify_result_rValid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/rawFactory_readDataStage_valid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/rawFactory_readHaltRequest \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/rawFactory_readDataStage_ready \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/counter_value \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/fsm_stateReg \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_2_io_push_valid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_2_io_push_ready \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_2_io_pop_valid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/fsmIsLastFindObstacle_data \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/fsmPushId_data \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/fsmPopId_data \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_2_io_pop_valid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/slow_microBlossom_io_push_ready \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/slow_microBlossom_io_pop_valid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_3_io_push_ready \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_3_io_pop_valid \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_3_io_pop_ready \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_3_io_pushOccupancy \
+                    /tb_user/inst_DUT/inst_microblossom_qshell_application/inst_core/inst_accelerator/streamFifoCC_3_io_popOccupancy \
+                    || true
+                  qshell-xdb-u280 sim coyote-status || true
+                  exit 1
+                fi
+                grep -F \
+                  'MICROBLOSSOM_D3_QSHELL_COYOTE_PASS defects=[0] correction_edges=[2] total_weight=2 operations=14' \
+                  "$out/workload.log" >/dev/null
+                qshell-xdb-u280 sim time > "$out/simulation-time.json"
+                qshell-xdb-u280 sim coyote-status > "$out/coyote-status.json"
+                qshell-xdb-u280 sim provenance > "$out/provenance.json"
+                qshell-xdb-u280 sim bundle --out "$out/bundle" >/dev/null
+                jq -e \
+                  '.host_write_count == 14 and .last_protocol_error == ""' \
+                  "$out/coyote-status.json" >/dev/null
+                test -s "$out/simulation-time.json"
+                test -s "$out/provenance.json"
+                test -s "$out/bundle/manifest.json"
+                cleanup
+                trap - EXIT
+              '';
+
           updateQshellRustAbi = pkgs.writeShellApplication {
             name = "update-qshell-rust-abi";
             runtimeInputs = [
@@ -667,6 +908,13 @@
           microblossom-scala = microblossomScala;
           microblossom-qshell-protocol = microblossomQshellProtocol;
           microblossom-qshell-coyote-bridge = microblossomQshellCoyoteBridge;
+          microblossom-xdb-u280 = microblossomXdb.u280;
+          microblossom-xdb-v80 = microblossomXdb.v80;
+          microblossom-qshell-u280-xdb-bridge = qshellXdbBridges.u280;
+          microblossom-qshell-v80-xdb-bridge = qshellXdbBridges.v80;
+          microblossom-d3-qshell-u280-xdb-run = qshellXdbRunners.u280;
+          microblossom-d3-qshell-v80-xdb-run = qshellXdbRunners.v80;
+          microblossom-d3-qshell-u280-xdb-check = d3QshellU280XdbCheck;
           microblossom-d3-sim-runner = microblossomD3SimRunner;
           microblossom-d3-golden-decode = d3GoldenDecode;
           microblossom-d3-qshell-golden-decode = d3QshellGoldenDecode;
@@ -674,6 +922,9 @@
           microblossom-d3-rtl = d3Rtl;
           microblossom-d3-qshell-core = d3QshellCore;
           microblossom-d3-qshell-app-hw-source = d3QshellAppHwSource;
+          microblossom-d3-qshell-simulation-hw-source = d3QshellSimulationHwSource;
+          microblossom-d3-qshell-u280-sim = d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim";
+          microblossom-d3-qshell-v80-sim = d3QshellSimulationPackages."microblossom-d3-qshell-v80-sim";
           microblossom-d3-qshell-u280-app = d3QshellApps.u280;
           microblossom-d3-qshell-v80-app = d3QshellApps.v80;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
@@ -697,17 +948,27 @@
           rtl = self.packages.${system}.microblossom-d3-rtl;
           qshellCore = self.packages.${system}.microblossom-d3-qshell-core;
           qshellAppHwSource = self.packages.${system}.microblossom-d3-qshell-app-hw-source;
+          qshellSimulationHwSource = self.packages.${system}.microblossom-d3-qshell-simulation-hw-source;
+          qshellXdbBridge = self.packages.${system}.microblossom-qshell-u280-xdb-bridge;
           qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
           qshellContractSource = qshell.lib.${system}.qshellContractSource;
         in
         {
           formatting = (treefmtEval system).config.build.check self;
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
+          qshell-u280-xdb-d3 = self.packages.${system}.microblossom-d3-qshell-u280-xdb-check;
 
           qshell-coyote-bridge = pkgs.runCommand "microblossom-qshell-coyote-bridge-check" { } ''
             ${coyoteBridge}/bin/microblossom-qshell-coyote-bridge --self-test \
               | tee bridge.log
             grep -F 'MICROBLOSSOM_QSHELL_COYOTE_BRIDGE_PASS' bridge.log >/dev/null
+            touch "$out"
+          '';
+
+          qshell-xdb-bridge = pkgs.runCommand "microblossom-qshell-xdb-bridge-check" { } ''
+            ${qshellXdbBridge}/bin/microblossom-qshell-u280-xdb-bridge --self-test \
+              | tee bridge.log
+            grep -F 'MICROBLOSSOM_QSHELL_XDB_BRIDGE_PASS' bridge.log >/dev/null
             touch "$out"
           '';
 
@@ -782,6 +1043,11 @@
               ''
                 app=${qshellAppHwSource}/src/microblossom
                 test -s ${qshellAppHwSource}/CMakeLists.txt
+                test -s ${qshellSimulationHwSource}/CMakeLists.txt
+                grep -F 'VFPGA_C0_0 "src/app/microblossom"' \
+                  ${qshellSimulationHwSource}/CMakeLists.txt >/dev/null
+                test -s ${qshellSimulationHwSource}/src/shell/hdl/qshell_dynamic_service.sv
+                test -s ${qshellSimulationHwSource}/src/app/microblossom/vfpga_top.svh
                 test -s "$app/vfpga_top.svh"
                 test -s "$app/init_ip.tcl"
                 for source in \
@@ -904,6 +1170,7 @@
             test -x ${coyoteBridge}/bin/microblossom-qshell-coyote-bridge
             test -x ${host}/bin/micro_blossom
             test -x ${host}/bin/generate_nix_d3_fixture
+            test -x ${host}/bin/microblossom_d3_qshell_coyote
             test ! -e ${host}/lib
 
             test -x ${simRunner}/bin/micro_blossom
@@ -1075,6 +1342,38 @@
             file = ./src/cpu/blossom/rust-toolchain.toml;
             sha256 = rustManifestSha256;
           };
+          coyoteNix = inputs."coyote-nix";
+          doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
+          coyoteTools = coyoteNix.lib.mkTools {
+            inherit pkgs;
+            coyoteRoot = coyote;
+            xilinxShareRoot = doctor.xilinxShareRoot;
+            platforms = systems;
+          };
+          mkXdbDevShell =
+            board:
+            coyoteNix.lib.mkCoyoteDevShell {
+              inherit pkgs;
+              tools = coyoteTools;
+              coyoteRoot = coyote;
+              withXilinx = true;
+              board = doctor.boards.${board} // {
+                xilinxVersion = doctor.boards.${board}.simXilinxVersion;
+              };
+              packages = [
+                qshell.packages.${system}."qshell-xdb-${board}"
+                self.packages.${system}."microblossom-xdb-${board}"
+                self.packages.${system}."microblossom-d3-qshell-${board}-xdb-run"
+              ];
+              sim = {
+                workspaceSuffix = "microblossom-${board}";
+                projectName = "qshell-fpga.xpr";
+                simset = "sim_1";
+                top = "tb_user";
+                mode = "behavioral";
+                session = "microblossom-${board}";
+              };
+            };
         in
         {
           default = pkgs.mkShell {
@@ -1087,6 +1386,8 @@
               verilator_5_014
             ];
           };
+          ultrascale = mkXdbDevShell "u280";
+          versal = mkXdbDevShell "v80";
         }
       );
 
