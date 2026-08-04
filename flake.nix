@@ -17,7 +17,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     coyote.follows = "qshell/coyote";
-    coyote-nix.follows = "qshell/coyote-nix";
+    coyote-nix = {
+      url = "github:TUM-DSE/coyote-nix/7fcfb0a0e42c47ddfcdcea9089832efc5486288f";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
   };
 
@@ -84,6 +87,7 @@
           qshellAbiSource = qshellLib.qshellAbiSource;
           qshellContractSource = qshellLib.qshellContractSource;
           qshellHostPackage = qshell.packages.${system}.qshell-host;
+          qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
           xilinxShareRoot = doctor.xilinxShareRoot;
@@ -863,6 +867,7 @@
           microblossom-d3-qshell-simulation-hw-source = d3QshellSimulationHwSource;
           microblossom-d3-qshell-u280-sim = d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim";
           microblossom-d3-qshell-v80-sim = d3QshellSimulationPackages."microblossom-d3-qshell-v80-sim";
+          qshell-u280-shell = qshellU280Shell;
           microblossom-d3-qshell-u280-app = d3QshellApps.u280;
           microblossom-d3-qshell-v80-app = d3QshellApps.v80;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;

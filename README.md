@@ -76,6 +76,7 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
 - `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
 - `microblossom-d3-qshell-core`: provenance-carrying ABI-2 envelope, MBQ1 frontend, generated d3 accelerator, and application clock composition;
+- `qshell-u280-shell`: the exact pinned full QShell U280 shell required before loading the application partial;
 - `microblossom-d3-qshell-{u280,v80}-app-synth`: early synthesis stages against the exact pinned QShell shells;
 - `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed application/partial-image packages;
 - `microblossom-d3-qshell-{u280,v80}-sim`: packaged Coyote/QShell behavioral simulation runtimes;
@@ -115,13 +116,22 @@ nix fmt -- flake.nix src/cpu/embedded/build.rs \
   src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
 ```
 
-Before authorized U280 deployment on `rose`, materialize the pinned driver for that host kernel:
+Before authorized U280 deployment on `rose`, materialize the pinned driver and exact full QShell shell:
 
 ```sh
 nix build .#coyote-driver-ultrascale_plus-rose
+nix build --out-link qshell-u280-shell .#qshell-u280-shell
 ```
 
-After an authorized operator has deployed the matching QShell-enabled shell and `microblossom-d3-qshell-u280-app` partial image, inserted that driver, configured huge pages, and made vFPGA 0 available as `/dev/coyote_fpga_0_v0`, run the physical host path with:
+Full-device programming and application partial reconfiguration are deliberately separate. `deploy-hw` accepts only a full `.bit`/`.pdi`; it must never receive `vfpga_c0_0.bin`. Program the full shell and reinsert the driver, then load the MicroBlossom partial through Coyote:
+
+```sh
+deploy-hw qshell-u280-shell/bitstreams/cyt_top.bit
+reconfigure-app --device 0 --vfpga 0 \
+  /path/to/microblossom-u280-app/bitstreams/config_0/vfpga_c0_0.bin
+```
+
+A failed `deploy-hw` attempt has already unloaded the driver if it reached step 1; deploying the full shell restores the programmed image and driver before `reconfigure-app`. Once vFPGA 0 is available as `/dev/coyote_fpga_0_v0`, run the physical host path with:
 
 ```sh
 nix run .#microblossom-d3-qshell-coyote-run -- --vfpga 0 --timeout-ms 10000
