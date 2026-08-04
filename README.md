@@ -72,6 +72,7 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-qshell-protocol`: tested MBQ1 codec, QShell ABI-2 beat adapter, and process-backed Coyote beat link;
 - `microblossom-qshell-coyote-bridge`: packaged one-sided Coyote bridge for exact stream beat boundaries (`LOCAL_READ` host-to-FPGA, `LOCAL_WRITE` FPGA-to-host);
 - `microblossom-d3-qshell-coyote-run`: canonical native Rust d3 workload connected to the physical Coyote driver bridge;
+- `coyote-driver-{ultrascale_plus,versal}-<host>`: pinned Coyote kernel modules built for Doctor's declared host kernels;
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
 - `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
 - `microblossom-d3-qshell-core`: provenance-carrying ABI-2 envelope, MBQ1 frontend, generated d3 accelerator, and application clock composition;
@@ -114,7 +115,13 @@ nix fmt -- flake.nix src/cpu/embedded/build.rs \
   src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
 ```
 
-After an authorized operator has deployed the matching QShell-enabled shell and `microblossom-d3-qshell-u280-app` partial image, inserted its matching Coyote driver, configured huge pages, and made vFPGA 0 available as `/dev/coyote_fpga_0_v0`, run the physical host path with:
+Before authorized U280 deployment on `rose`, materialize the pinned driver for that host kernel:
+
+```sh
+nix build .#coyote-driver-ultrascale_plus-rose
+```
+
+After an authorized operator has deployed the matching QShell-enabled shell and `microblossom-d3-qshell-u280-app` partial image, inserted that driver, configured huge pages, and made vFPGA 0 available as `/dev/coyote_fpga_0_v0`, run the physical host path with:
 
 ```sh
 nix run .#microblossom-d3-qshell-coyote-run -- --vfpga 0 --timeout-ms 10000

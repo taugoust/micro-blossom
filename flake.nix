@@ -92,6 +92,11 @@
             coyoteRoot = coyote;
             platforms = systems;
           };
+          coyoteDriverPackages = coyoteNix.lib.mkCoyoteDriverPackages {
+            inherit pkgs;
+            coyoteRoot = coyote;
+            inherit (doctor) driverKernels targetPlatforms;
+          };
 
           rustToolchain = fenix.packages.${system}.fromToolchainFile {
             file = ./src/cpu/blossom/rust-toolchain.toml;
@@ -865,6 +870,7 @@
           update-qshell-rust-abi = updateQshellRustAbi;
           verilator-5_014 = verilator_5_014;
         }
+        // coyoteDriverPackages
       );
 
       checks = forAllSystems (
