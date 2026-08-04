@@ -13,7 +13,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     qshell = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=qs0-contracts-reference-model&rev=9ba6d34d5e404faadb9c4d99afe49a9285a6b880";
+      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=master";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     coyote.follows = "qshell/coyote";
@@ -553,8 +553,8 @@
                   "$core/microblossom_qshell_core.sv"
                 cp ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
                   "$core/microblossom_qshell_clock_div2.sv"
-                cp ${./src/qshell/rtl/microblossom_qshell_envelope_v2.sv} \
-                  "$core/microblossom_qshell_envelope_v2.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_envelope.sv} \
+                  "$core/microblossom_qshell_envelope.sv"
                 cp ${./src/qshell/rtl/microblossom_qshell_application.sv} \
                   "$core/microblossom_qshell_application.sv"
                 cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
@@ -568,7 +568,7 @@
                   --arg coreSha256 "$(sha256sum "$core/microblossom_qshell_core.sv" | cut -d' ' -f1)" \
                   --arg clockDividerSha256 "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" \
                   --arg timingConstraintsSha256 "$(sha256sum ${./src/qshell/app/src/microblossom/microblossom_qshell_timing.xdc} | cut -d' ' -f1)" \
-                  --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope_v2.sv" | cut -d' ' -f1)" \
+                  --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope.sv" | cut -d' ' -f1)" \
                   --arg applicationSha256 "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" \
                   --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
@@ -619,7 +619,7 @@
             cp "$core/microblossom_qshell_frontend.sv" "$hdl/"
             cp "$core/microblossom_qshell_core.sv" "$hdl/"
             cp "$core/microblossom_qshell_clock_div2.sv" "$hdl/"
-            cp "$core/microblossom_qshell_envelope_v2.sv" "$hdl/"
+            cp "$core/microblossom_qshell_envelope.sv" "$hdl/"
             cp "$core/microblossom_qshell_application.sv" "$hdl/"
             cp "$core/qshell_abi_generated.svh" "$hdl/"
             cp "$core/core-manifest.json" "$out/"
@@ -640,7 +640,7 @@
               microblossom_qshell_frontend.sv \
               microblossom_qshell_core.sv \
               microblossom_qshell_clock_div2.sv \
-              microblossom_qshell_envelope_v2.sv \
+              microblossom_qshell_envelope.sv \
               microblossom_qshell_application.sv; do
               printf '`include "hdl/%s"\n' "$source" >> "$vfpga"
             done
@@ -839,7 +839,7 @@
             text = ''
               root="$(git rev-parse --show-toplevel)"
               python3 "$root/src/qshell/tools/generate_qshell_rust_abi.py" \
-                --spec ${qshellContractSource}/abi/qshell-abi-v2.json \
+                --spec ${qshellContractSource}/abi/qshell-abi.json \
                 --out "$root/src/qshell/protocol/src/qshell_abi_generated.rs"
             '';
           };
@@ -1027,9 +1027,12 @@
               }
               ''
                 python3 ${./src/qshell/tools/generate_qshell_rust_abi.py} \
-                  --spec ${qshellContractSource}/abi/qshell-abi-v2.json \
+                  --spec ${qshellContractSource}/abi/qshell-abi.json \
                   --out generated.rs
                 diff -u ${./src/qshell/protocol/src/qshell_abi_generated.rs} generated.rs
+                python3 ${./src/qshell/tools/check_qshell_wire_fixture.py} \
+                  --spec ${qshellContractSource}/abi/qshell-abi.json \
+                  --fixtures ${qshellContractSource}/abi/golden-fixtures.json
                 touch "$out"
               '';
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
@@ -1056,8 +1059,8 @@
                 verilator --version > "$out/verilator-version.txt"
               '';
 
-          qshell-envelope-v2 =
-            pkgs.runCommand "microblossom-qshell-envelope-v2"
+          qshell-envelope =
+            pkgs.runCommand "microblossom-qshell-envelope"
               {
                 nativeBuildInputs = [
                   pkgs.gnumake
@@ -1070,15 +1073,15 @@
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
                 test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  9ba6d34d5e404faadb9c4d99afe49a9285a6b880
+                  b75accf48107a023be3fc5268afeec43a7f5adbc
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
-                  --top-module tb_envelope_v2 \
-                  ${./src/qshell/rtl/microblossom_qshell_envelope_v2.sv} \
-                  ${./src/qshell/tests/microblossom_qshell_envelope_v2_tb.sv}
-                ./obj_dir/Vtb_envelope_v2 2>&1 | tee "$out/test.log"
-                grep -F 'MICROBLOSSOM_QSHELL_ENVELOPE_V2_PASS' "$out/test.log" >/dev/null
+                  --top-module tb_envelope \
+                  ${./src/qshell/rtl/microblossom_qshell_envelope.sv} \
+                  ${./src/qshell/tests/microblossom_qshell_envelope_tb.sv}
+                ./obj_dir/Vtb_envelope 2>&1 | tee "$out/test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_ENVELOPE_PASS' "$out/test.log" >/dev/null
                 cp "$abi/qshell_abi_generated.svh" "$out/"
                 verilator --version > "$out/verilator-version.txt"
               '';
@@ -1112,7 +1115,7 @@
                   microblossom_qshell_frontend.sv \
                   microblossom_qshell_core.sv \
                   microblossom_qshell_clock_div2.sv \
-                  microblossom_qshell_envelope_v2.sv \
+                  microblossom_qshell_envelope.sv \
                   microblossom_qshell_application.sv \
                   qshell_abi_generated.svh; do
                   test -s "$hdl/$source"
@@ -1122,7 +1125,7 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  9ba6d34d5e404faadb9c4d99afe49a9285a6b880
+                  b75accf48107a023be3fc5268afeec43a7f5adbc
                 touch "$out"
               '';
 
@@ -1146,7 +1149,7 @@
                   "$core/microblossom_qshell_frontend.sv" \
                   "$core/microblossom_qshell_core.sv" \
                   "$core/microblossom_qshell_clock_div2.sv" \
-                  "$core/microblossom_qshell_envelope_v2.sv" \
+                  "$core/microblossom_qshell_envelope.sv" \
                   "$core/microblossom_qshell_application.sv" \
                   ${./src/qshell/tests/microblossom_qshell_application_tb.sv}
                 timeout 120 ./obj_dir/Vtb_application 2>&1 | tee "$out/test.log"
@@ -1169,12 +1172,12 @@
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
                 test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
-                  9ba6d34d5e404faadb9c4d99afe49a9285a6b880
+                  b75accf48107a023be3fc5268afeec43a7f5adbc
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
                   "$(jq -er '.clockDividerSha256' "$core/core-manifest.json")"
-                test "$(sha256sum "$core/microblossom_qshell_envelope_v2.sv" | cut -d' ' -f1)" = \
+                test "$(sha256sum "$core/microblossom_qshell_envelope.sv" | cut -d' ' -f1)" = \
                   "$(jq -er '.envelopeSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" = \
                   "$(jq -er '.applicationSha256' "$core/core-manifest.json")"
@@ -1197,7 +1200,7 @@
                   "$core/microblossom_qshell_frontend.sv" \
                   "$core/microblossom_qshell_core.sv" \
                   "$core/microblossom_qshell_clock_div2.sv" \
-                  "$core/microblossom_qshell_envelope_v2.sv" \
+                  "$core/microblossom_qshell_envelope.sv" \
                   "$core/microblossom_qshell_application.sv"
                 cp "$core/core-manifest.json" "$out/"
                 verilator --version > "$out/verilator-version.txt"

@@ -49,7 +49,7 @@ microblossom_qshell_clock_div2 inst_clock_divider (
     .slow_aresetn(slow_aresetn)
 );
 
-microblossom_qshell_envelope_v2 #(
+microblossom_qshell_envelope #(
     .AXIS_ID_W(AXIS_ID_W)
 ) inst_envelope (
     .aclk(aclk),

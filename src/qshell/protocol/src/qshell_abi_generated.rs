@@ -1,4 +1,4 @@
-// Generated from QShell abi/qshell-abi-v2.json; do not edit.
+// Generated from QShell abi/qshell-abi.json; do not edit.
 pub const VERSION: u8 = 2;
 pub const BEAT_BYTES: usize = 64;
 pub const HEADER_BYTES: usize = 48;
@@ -17,13 +17,14 @@ pub mod flag {
 }
 
 pub mod schema {
-    pub const OPAQUE_LOOPBACK_V1: u32 = 0x1;
-    pub const HELIOS_PHENOM_SYNDROME_V1: u32 = 0x10001;
-    pub const HELIOS_SPARSE_CORRECTION_V1: u32 = 0x10002;
-    pub const MICROBLOSSOM_COMMAND_V1: u32 = 0x20001;
-    pub const MICROBLOSSOM_RESPONSE_V1: u32 = 0x20002;
-    pub const CONTROL_V1: u32 = 0xffff0001;
-    pub const ERROR_V1: u32 = 0xffff0002;
+    pub const OPAQUE_LOOPBACK: u32 = 0x1;
+    pub const HELIOS_PHENOM_SYNDROME: u32 = 0x10001;
+    pub const HELIOS_SPARSE_CORRECTION: u32 = 0x10002;
+    pub const MICROBLOSSOM_COMMAND: u32 = 0x20001;
+    pub const MICROBLOSSOM_RESPONSE: u32 = 0x20002;
+    pub const PAULI_FRAME_XOR: u32 = 0x30001;
+    pub const CONTROL: u32 = 0xffff0001;
+    pub const ERROR: u32 = 0xffff0002;
 }
 
 pub mod error_scope {

@@ -98,7 +98,7 @@ nix build .#checks.x86_64-linux.d3-behavior-smoke
 nix build .#checks.x86_64-linux.d3-golden-decode
 nix build .#checks.x86_64-linux.qshell-frontend
 nix build .#checks.x86_64-linux.qshell-clock
-nix build .#checks.x86_64-linux.qshell-envelope-v2
+nix build .#checks.x86_64-linux.qshell-envelope
 nix build .#checks.x86_64-linux.qshell-rust-abi-generated
 nix build .#checks.x86_64-linux.qshell-core
 nix build .#checks.x86_64-linux.qshell-application

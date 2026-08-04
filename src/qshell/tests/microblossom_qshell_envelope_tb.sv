@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-module tb_envelope_v2;
+module tb_envelope;
 
 `include "qshell_abi_generated.svh"
 
@@ -38,7 +38,7 @@ logic mbq_m_axis_tlast = 1'b1;
 logic mbq_m_axis_tvalid = 1'b0;
 logic mbq_m_axis_tready;
 
-microblossom_qshell_envelope_v2 dut (.*);
+microblossom_qshell_envelope dut (.*);
 
 always #2 aclk = ~aclk;
 
@@ -50,26 +50,26 @@ function automatic logic [383:0] header(
     logic [383:0] value;
     begin
         value = '0;
-        value[QSHELL_V2_MAGIC_LSB +: QSHELL_V2_MAGIC_W] = QSHELL_V2_MAGIC;
-        value[QSHELL_V2_ABI_VERSION_LSB +: QSHELL_V2_ABI_VERSION_W] =
-            QSHELL_V2_ABI_VERSION[7:0];
-        value[QSHELL_V2_RECORD_CLASS_LSB +: QSHELL_V2_RECORD_CLASS_W] =
-            QSHELL_V2_CLASS_SYNDROME;
-        value[QSHELL_V2_FLAGS_LSB +: QSHELL_V2_FLAGS_W] = flags;
-        value[QSHELL_V2_HEADER_BYTES_LSB +: QSHELL_V2_HEADER_BYTES_W] =
-            QSHELL_V2_HEADER_BYTES[15:0];
-        value[QSHELL_V2_PAYLOAD_BYTES_LSB +: QSHELL_V2_PAYLOAD_BYTES_W] = 32'd64;
-        value[QSHELL_V2_CONTEXT_ID_LSB +: QSHELL_V2_CONTEXT_ID_W] = CONTEXT_ID;
-        value[QSHELL_V2_ROUND_ID_LSB +: QSHELL_V2_ROUND_ID_W] = ROUND_ID;
-        value[QSHELL_V2_SCHEMA_ID_LSB +: QSHELL_V2_SCHEMA_ID_W] = schema;
-        value[QSHELL_V2_SOURCE_ENDPOINT_ID_LSB +: QSHELL_V2_SOURCE_ENDPOINT_ID_W] =
+        value[QSHELL_MAGIC_LSB +: QSHELL_MAGIC_W] = QSHELL_MAGIC;
+        value[QSHELL_ABI_VERSION_LSB +: QSHELL_ABI_VERSION_W] =
+            QSHELL_ABI_VERSION[7:0];
+        value[QSHELL_RECORD_CLASS_LSB +: QSHELL_RECORD_CLASS_W] =
+            QSHELL_CLASS_SYNDROME;
+        value[QSHELL_FLAGS_LSB +: QSHELL_FLAGS_W] = flags;
+        value[QSHELL_HEADER_BYTES_LSB +: QSHELL_HEADER_BYTES_W] =
+            QSHELL_HEADER_BYTES[15:0];
+        value[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] = 32'd64;
+        value[QSHELL_CONTEXT_ID_LSB +: QSHELL_CONTEXT_ID_W] = CONTEXT_ID;
+        value[QSHELL_ROUND_ID_LSB +: QSHELL_ROUND_ID_W] = ROUND_ID;
+        value[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] = schema;
+        value[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W] =
             SOURCE_ENDPOINT;
-        value[QSHELL_V2_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_V2_DESTINATION_ENDPOINT_ID_W] =
+        value[QSHELL_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_DESTINATION_ENDPOINT_ID_W] =
             DECODER_ENDPOINT;
-        value[QSHELL_V2_ROUTE_CAPABILITY_ID_LSB +: QSHELL_V2_ROUTE_CAPABILITY_ID_W] =
+        value[QSHELL_ROUTE_CAPABILITY_ID_LSB +: QSHELL_ROUTE_CAPABILITY_ID_W] =
             CAPABILITY_ID;
-        value[QSHELL_V2_ROUTE_VERSION_LSB +: QSHELL_V2_ROUTE_VERSION_W] = ROUTE_VERSION;
-        value[QSHELL_V2_RECORD_SEQUENCE_LSB +: QSHELL_V2_RECORD_SEQUENCE_W] =
+        value[QSHELL_ROUTE_VERSION_LSB +: QSHELL_ROUTE_VERSION_W] = ROUTE_VERSION;
+        value[QSHELL_RECORD_SEQUENCE_LSB +: QSHELL_RECORD_SEQUENCE_W] =
             record_sequence;
         header = value;
     end
@@ -186,23 +186,23 @@ task automatic check_response(
         while (!m_axis_tvalid) @(negedge aclk);
         assert(m_axis_tkeep == '1 && !m_axis_tlast && m_axis_tid == tid)
             else $fatal(1, "bad first response sideband");
-        assert(m_axis_tdata[QSHELL_V2_RECORD_CLASS_LSB +: QSHELL_V2_RECORD_CLASS_W] ==
-               QSHELL_V2_CLASS_CORRECTION)
+        assert(m_axis_tdata[QSHELL_RECORD_CLASS_LSB +: QSHELL_RECORD_CLASS_W] ==
+               QSHELL_CLASS_CORRECTION)
             else $fatal(1, "response is not a correction");
-        assert(m_axis_tdata[QSHELL_V2_FLAGS_LSB +: QSHELL_V2_FLAGS_W] ==
-               (expected_eor ? QSHELL_V2_FLAG_END_OF_ROUND : 16'd0))
+        assert(m_axis_tdata[QSHELL_FLAGS_LSB +: QSHELL_FLAGS_W] ==
+               (expected_eor ? QSHELL_FLAG_END_OF_ROUND : 16'd0))
             else $fatal(1, "bad response flags");
-        assert(m_axis_tdata[QSHELL_V2_PAYLOAD_BYTES_LSB +: QSHELL_V2_PAYLOAD_BYTES_W] == 64)
+        assert(m_axis_tdata[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] == 64)
             else $fatal(1, "bad response payload size");
-        assert(m_axis_tdata[QSHELL_V2_SCHEMA_ID_LSB +: QSHELL_V2_SCHEMA_ID_W] ==
-               QSHELL_V2_SCHEMA_MICROBLOSSOM_RESPONSE_V1)
+        assert(m_axis_tdata[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] ==
+               QSHELL_SCHEMA_MICROBLOSSOM_RESPONSE)
             else $fatal(1, "bad response schema");
-        assert(m_axis_tdata[QSHELL_V2_SOURCE_ENDPOINT_ID_LSB +: QSHELL_V2_SOURCE_ENDPOINT_ID_W] ==
+        assert(m_axis_tdata[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W] ==
                DECODER_ENDPOINT &&
-               m_axis_tdata[QSHELL_V2_DESTINATION_ENDPOINT_ID_LSB +:
-                            QSHELL_V2_DESTINATION_ENDPOINT_ID_W] == SOURCE_ENDPOINT)
+               m_axis_tdata[QSHELL_DESTINATION_ENDPOINT_ID_LSB +:
+                            QSHELL_DESTINATION_ENDPOINT_ID_W] == SOURCE_ENDPOINT)
             else $fatal(1, "response endpoints were not reversed");
-        assert(m_axis_tdata[QSHELL_V2_RECORD_SEQUENCE_LSB +: QSHELL_V2_RECORD_SEQUENCE_W] ==
+        assert(m_axis_tdata[QSHELL_RECORD_SEQUENCE_LSB +: QSHELL_RECORD_SEQUENCE_W] ==
                expected_sequence)
             else $fatal(1, "bad correction sequence");
         assert(m_axis_tdata[511:384] == expected_payload[127:0])
@@ -245,14 +245,14 @@ initial begin : test
 
     // Successful writes produce no MBQ1 response; readiness is the completion signal.
     command = mbq_record(8'h02, 0, 64'h1122_3344_5566_7788);
-    send_record(header(0, QSHELL_V2_SCHEMA_MICROBLOSSOM_COMMAND_V1, 0), command, 6'h11);
+    send_record(header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 0), command, 6'h11);
     accept_mbq(command, 6'h11);
     finish_without_response();
     assert(!m_axis_tvalid) else $fatal(1, "write unexpectedly produced an envelope");
 
     // A read result is wrapped in two beats and begins correction sequence zero.
     command = mbq_record(8'h03, 1, 64'h8);
-    send_record(header(0, QSHELL_V2_SCHEMA_MICROBLOSSOM_COMMAND_V1, 1), command, 6'h12);
+    send_record(header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 1), command, 6'h12);
     accept_mbq(command, 6'h12);
     assert(!s_axis_tready) else $fatal(1, "adapter accepted another command while one was active");
     response = mbq_record(8'h83, 1, 64'h2401_23c0);
@@ -262,8 +262,8 @@ initial begin : test
     // Completion closes the round and uses the next correction sequence number.
     command = mbq_record(8'h04, 2, 64'd0);
     send_record(
-        header(QSHELL_V2_FLAG_END_OF_ROUND,
-               QSHELL_V2_SCHEMA_MICROBLOSSOM_COMMAND_V1, 2),
+        header(QSHELL_FLAG_END_OF_ROUND,
+               QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 2),
         command,
         6'h13
     );
@@ -279,7 +279,7 @@ initial begin : test
     begin
         logic [511:0] first;
         first = '0;
-        first[383:0] = header(0, QSHELL_V2_SCHEMA_MICROBLOSSOM_COMMAND_V1, 0);
+        first[383:0] = header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 0);
         first[511:384] = command[127:0];
         send_beat(first, '1, 1'b0, 6'h14);
     end
@@ -288,19 +288,19 @@ initial begin : test
     assert(!mbq_s_axis_tvalid) else $fatal(1, "malformed record reached MBQ1 core");
 
     // Recovery after discard starts a new correction sequence after completion.
-    send_record(header(0, QSHELL_V2_SCHEMA_MICROBLOSSOM_COMMAND_V1, 0), command, 6'h15);
+    send_record(header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 0), command, 6'h15);
     accept_mbq(command, 6'h15);
     response = mbq_record(8'h83, 0, 64'hfeed_face);
     return_mbq(response, 6'h15);
     check_response(response, 0, 1'b0, 6'h15);
 
     // A wrong schema is discarded through tlast and does not poison the next record.
-    send_record(header(0, QSHELL_V2_SCHEMA_HELIOS_PHENOM_SYNDROME_V1, 1), command, 6'h16);
+    send_record(header(0, QSHELL_SCHEMA_HELIOS_PHENOM_SYNDROME, 1), command, 6'h16);
     repeat (3) @(posedge aclk);
     assert(!mbq_s_axis_tvalid && s_axis_tready)
         else $fatal(1, "schema rejection did not recover at record boundary");
 
-    $display("MICROBLOSSOM_QSHELL_ENVELOPE_V2_PASS");
+    $display("MICROBLOSSOM_QSHELL_ENVELOPE_PASS");
     $finish;
 end
 

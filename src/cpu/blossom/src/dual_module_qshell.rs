@@ -15,8 +15,8 @@ use micro_blossom_nostd::instruction::*;
 use micro_blossom_nostd::interface::*;
 use micro_blossom_nostd::util::*;
 use microblossom_qshell_protocol::{
-    AccessWidth, CompletionCode, CoyoteProcessBeatLink, GraphId, Opcode, QshellMmioTransport, QshellV2RecordLink,
-    QshellV2Route, Record, RecordLink, TransportError, UNBOUNDED_OPERATIONS,
+    AccessWidth, CompletionCode, CoyoteProcessBeatLink, GraphId, Opcode, QshellMmioTransport, QshellRecordLink, QshellRoute,
+    Record, RecordLink, TransportError, UNBOUNDED_OPERATIONS,
 };
 use scan_fmt::*;
 use serde::*;
@@ -361,7 +361,7 @@ pub type DualModuleQshellSimulationDriver = DualModuleQshellDriver<SimulationRec
 pub type DualModuleQshell = DualModuleStackless<DualDriverTracked<DualModuleQshellSimulationDriver, MAX_NODE_NUM>>;
 pub type SolverEmbeddedQshell = SolverEmbeddedBoxed<DualModuleQshellSimulationDriver>;
 
-pub type CoyoteQshellRecordLink = QshellV2RecordLink<CoyoteProcessBeatLink>;
+pub type CoyoteQshellRecordLink = QshellRecordLink<CoyoteProcessBeatLink>;
 
 /// Concrete native driver used by the packaged Coyote and xdb process bridges.
 pub struct CoyoteQshellDriver {
@@ -438,9 +438,9 @@ impl SolverTrackedDual for CoyoteQshellDriver {
         let config: DualQshellCoyoteConfig = serde_json::from_value(config).unwrap();
         let graph_id = decode_graph_id(&config.graph_sha256).unwrap();
         let beats = CoyoteProcessBeatLink::spawn(&config.bridge_executable, config.vfpga_id, config.timeout_ms).unwrap();
-        let records = QshellV2RecordLink::new(
+        let records = QshellRecordLink::new(
             beats,
-            QshellV2Route {
+            QshellRoute {
                 context_id: config.context_id,
                 initial_round_id: config.initial_round_id,
                 source_endpoint_id: config.source_endpoint_id,

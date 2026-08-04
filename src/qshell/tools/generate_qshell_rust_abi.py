@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Rust constants from QShell's authoritative ABI-2 JSON spec."""
+"""Generate Rust constants from QShell's authoritative current ABI JSON spec."""
 
 import argparse
 import json
@@ -22,7 +22,7 @@ def main() -> None:
     assert len(spec["magic_ascii"].encode("ascii")) == 4
 
     lines = [
-        "// Generated from QShell abi/qshell-abi-v2.json; do not edit.",
+        "// Generated from QShell abi/qshell-abi.json; do not edit.",
         f"pub const VERSION: u8 = {spec['version']};",
         f"pub const BEAT_BYTES: usize = {spec['beat_bytes']};",
         f"pub const HEADER_BYTES: usize = {spec['header_bytes']};",

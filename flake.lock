@@ -3,17 +3,17 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1784208153,
-        "narHash": "sha256-/pBeGWQcV949Sbtj1o/EhCqIQvFqMpcMQEeemmziKcU=",
+        "lastModified": 1785511077,
+        "narHash": "sha256-uYbtCyoqjaBYSnwinkYp6h3u+jYWJEZXBWt39gj4BjU=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "63f4acb2c815bf8cdcd16432908cde3af7140cd6",
+        "rev": "99abf1c724482489ae21350a5adfedf780e0fd19",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "63f4acb2c815bf8cdcd16432908cde3af7140cd6",
+        "rev": "99abf1c724482489ae21350a5adfedf780e0fd19",
         "type": "github"
       }
     },
@@ -51,17 +51,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1785495918,
-        "narHash": "sha256-0SIdeY6rXxox85Hcns7iW4x0C0AQFZMjaz8Mb/65fSg=",
+        "lastModified": 1785511097,
+        "narHash": "sha256-qlB9BgyP+o8nKgNTlyksZTQsUznDkHtVcgEfVFoKHIE=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "36d0367875689569580e5a55925cbddcd9977562",
+        "rev": "5ba39f0680536e24ea481df362b4ae9c141b7244",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "36d0367875689569580e5a55925cbddcd9977562",
+        "rev": "5ba39f0680536e24ea481df362b4ae9c141b7244",
         "type": "github"
       }
     },
@@ -791,20 +791,20 @@
         "nixpkgs": [
           "nixpkgs"
         ],
+        "treefmt-nix": "treefmt-nix_2",
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1785497093,
-        "narHash": "sha256-B4n1xjPou0LT7kMxVIFFoFmG3P0ztyfhw5eEsOpKWM8=",
-        "ref": "qs0-contracts-reference-model",
-        "rev": "9ba6d34d5e404faadb9c4d99afe49a9285a6b880",
-        "revCount": 9,
+        "lastModified": 1785848317,
+        "narHash": "sha256-Bt7+b2yCb/gic7DnAfqjGIR7xRnUhzLxSiEecUagvyw=",
+        "ref": "master",
+        "rev": "b75accf48107a023be3fc5268afeec43a7f5adbc",
+        "revCount": 46,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "qs0-contracts-reference-model",
-        "rev": "9ba6d34d5e404faadb9c4d99afe49a9285a6b880",
+        "ref": "master",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }
@@ -848,7 +848,7 @@
         "fenix": "fenix",
         "nixpkgs": "nixpkgs",
         "qshell": "qshell",
-        "treefmt-nix": "treefmt-nix_2"
+        "treefmt-nix": "treefmt-nix_3"
       }
     },
     "rust-analyzer-src": {
@@ -1035,6 +1035,27 @@
       }
     },
     "treefmt-nix_2": {
+      "inputs": {
+        "nixpkgs": [
+          "qshell",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1785360170,
+        "narHash": "sha256-XE1lKgQ3eIO3E7zWryqcRsax+mYXod/5RHBn4YaR9YE=",
+        "owner": "numtide",
+        "repo": "treefmt-nix",
+        "rev": "d1187f8bc71fb8aab02395869ec3f5c1920f75c0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "treefmt-nix",
+        "type": "github"
+      }
+    },
+    "treefmt-nix_3": {
       "inputs": {
         "nixpkgs": [
           "nixpkgs"

@@ -1,13 +1,14 @@
 `timescale 1ns / 1ps
 
-// QShell ABI-2 envelope adapter for the internal fixed-size MBQ1 stream.
+// Current QShell envelope adapter for the internal fixed-size MBQ1 stream.
+// The mandatory numeric wire marker remains 2.
 //
-// A 64-byte MBQ1 command arrives as 16 payload bytes in the ABI-2 header beat
+// A 64-byte MBQ1 command arrives as 16 payload bytes in the header beat
 // followed by a 48-byte continuation. Responses make the inverse conversion.
 // The adapter deliberately allows only one MBQ1 command to be outstanding, so
 // request metadata remains associated with a delayed or error response without
 // duplicating the MBQ1 frontend's job/sequence state.
-module microblossom_qshell_envelope_v2 #(
+module microblossom_qshell_envelope #(
     parameter int AXIS_ID_W = 6
 ) (
     input  logic                  aclk,
@@ -72,8 +73,8 @@ wire output_fire = m_axis_tvalid && m_axis_tready;
 wire mbq_request_fire = mbq_s_axis_tvalid && mbq_s_axis_tready;
 wire mbq_response_fire = mbq_m_axis_tvalid && mbq_m_axis_tready;
 wire request_end_of_round =
-    request_header[QSHELL_V2_FLAGS_LSB +: QSHELL_V2_FLAGS_W] ==
-    QSHELL_V2_FLAG_END_OF_ROUND;
+    request_header[QSHELL_FLAGS_LSB +: QSHELL_FLAGS_W] ==
+    QSHELL_FLAG_END_OF_ROUND;
 wire mbq_response_end_of_round =
     mbq_m_axis_tdata[47:40] == MBQ_OP_COMPLETION ||
     mbq_m_axis_tdata[47:40] == MBQ_OP_ERROR;
@@ -81,20 +82,20 @@ wire mbq_response_end_of_round =
 function automatic logic first_beat_valid(input logic [511:0] data);
     logic [15:0] flags;
     begin
-        flags = data[QSHELL_V2_FLAGS_LSB +: QSHELL_V2_FLAGS_W];
+        flags = data[QSHELL_FLAGS_LSB +: QSHELL_FLAGS_W];
         first_beat_valid =
-            data[QSHELL_V2_MAGIC_LSB +: QSHELL_V2_MAGIC_W] == QSHELL_V2_MAGIC &&
-            data[QSHELL_V2_ABI_VERSION_LSB +: QSHELL_V2_ABI_VERSION_W] ==
-                QSHELL_V2_ABI_VERSION[7:0] &&
-            data[QSHELL_V2_RECORD_CLASS_LSB +: QSHELL_V2_RECORD_CLASS_W] ==
-                QSHELL_V2_CLASS_SYNDROME &&
-            (flags & ~QSHELL_V2_FLAG_END_OF_ROUND) == 0 &&
-            data[QSHELL_V2_HEADER_BYTES_LSB +: QSHELL_V2_HEADER_BYTES_W] ==
-                QSHELL_V2_HEADER_BYTES[15:0] &&
-            data[QSHELL_V2_RESERVED_LSB +: QSHELL_V2_RESERVED_W] == 0 &&
-            data[QSHELL_V2_PAYLOAD_BYTES_LSB +: QSHELL_V2_PAYLOAD_BYTES_W] == 32'd64 &&
-            data[QSHELL_V2_SCHEMA_ID_LSB +: QSHELL_V2_SCHEMA_ID_W] ==
-                QSHELL_V2_SCHEMA_MICROBLOSSOM_COMMAND_V1;
+            data[QSHELL_MAGIC_LSB +: QSHELL_MAGIC_W] == QSHELL_MAGIC &&
+            data[QSHELL_ABI_VERSION_LSB +: QSHELL_ABI_VERSION_W] ==
+                QSHELL_ABI_VERSION[7:0] &&
+            data[QSHELL_RECORD_CLASS_LSB +: QSHELL_RECORD_CLASS_W] ==
+                QSHELL_CLASS_SYNDROME &&
+            (flags & ~QSHELL_FLAG_END_OF_ROUND) == 0 &&
+            data[QSHELL_HEADER_BYTES_LSB +: QSHELL_HEADER_BYTES_W] ==
+                QSHELL_HEADER_BYTES[15:0] &&
+            data[QSHELL_RESERVED_LSB +: QSHELL_RESERVED_W] == 0 &&
+            data[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] == 32'd64 &&
+            data[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] ==
+                QSHELL_SCHEMA_MICROBLOSSOM_COMMAND;
     end
 endfunction
 
@@ -108,24 +109,24 @@ function automatic logic [383:0] make_response_header(
     logic [31:0] destination_endpoint;
     begin
         source_endpoint = header[
-            QSHELL_V2_SOURCE_ENDPOINT_ID_LSB +: QSHELL_V2_SOURCE_ENDPOINT_ID_W
+            QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W
         ];
         destination_endpoint = header[
-            QSHELL_V2_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_V2_DESTINATION_ENDPOINT_ID_W
+            QSHELL_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_DESTINATION_ENDPOINT_ID_W
         ];
         value = header;
-        value[QSHELL_V2_RECORD_CLASS_LSB +: QSHELL_V2_RECORD_CLASS_W] =
-            QSHELL_V2_CLASS_CORRECTION;
-        value[QSHELL_V2_FLAGS_LSB +: QSHELL_V2_FLAGS_W] =
-            end_of_round ? QSHELL_V2_FLAG_END_OF_ROUND : 16'd0;
-        value[QSHELL_V2_PAYLOAD_BYTES_LSB +: QSHELL_V2_PAYLOAD_BYTES_W] = 32'd64;
-        value[QSHELL_V2_SCHEMA_ID_LSB +: QSHELL_V2_SCHEMA_ID_W] =
-            QSHELL_V2_SCHEMA_MICROBLOSSOM_RESPONSE_V1;
-        value[QSHELL_V2_SOURCE_ENDPOINT_ID_LSB +: QSHELL_V2_SOURCE_ENDPOINT_ID_W] =
+        value[QSHELL_RECORD_CLASS_LSB +: QSHELL_RECORD_CLASS_W] =
+            QSHELL_CLASS_CORRECTION;
+        value[QSHELL_FLAGS_LSB +: QSHELL_FLAGS_W] =
+            end_of_round ? QSHELL_FLAG_END_OF_ROUND : 16'd0;
+        value[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] = 32'd64;
+        value[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] =
+            QSHELL_SCHEMA_MICROBLOSSOM_RESPONSE;
+        value[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W] =
             destination_endpoint;
-        value[QSHELL_V2_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_V2_DESTINATION_ENDPOINT_ID_W] =
+        value[QSHELL_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_DESTINATION_ENDPOINT_ID_W] =
             source_endpoint;
-        value[QSHELL_V2_RECORD_SEQUENCE_LSB +: QSHELL_V2_RECORD_SEQUENCE_W] =
+        value[QSHELL_RECORD_SEQUENCE_LSB +: QSHELL_RECORD_SEQUENCE_W] =
             response_sequence;
         make_response_header = value;
     end
