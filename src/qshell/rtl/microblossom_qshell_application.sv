@@ -25,6 +25,7 @@ module microblossom_qshell_application #(
     input  logic                  m_axis_tready
 );
 
+logic fast_aresetn;
 logic slow_clk;
 logic slow_aresetn;
 logic [511:0] mbq_request_tdata;
@@ -43,6 +44,7 @@ logic mbq_response_tready;
 microblossom_qshell_clock_div2 inst_clock_divider (
     .aclk(aclk),
     .aresetn(aresetn),
+    .fast_aresetn(fast_aresetn),
     .slow_clk(slow_clk),
     .slow_aresetn(slow_aresetn)
 );
@@ -51,7 +53,7 @@ microblossom_qshell_envelope_v2 #(
     .AXIS_ID_W(AXIS_ID_W)
 ) inst_envelope (
     .aclk(aclk),
-    .aresetn(aresetn),
+    .aresetn(fast_aresetn),
     .s_axis_tdata(s_axis_tdata),
     .s_axis_tkeep(s_axis_tkeep),
     .s_axis_tid(s_axis_tid),
@@ -85,7 +87,7 @@ microblossom_qshell_core #(
 ) inst_core (
     .aclk(aclk),
     .slow_clk(slow_clk),
-    .aresetn(aresetn),
+    .aresetn(fast_aresetn),
     .slow_aresetn(slow_aresetn),
     .s_axis_tdata(mbq_request_tdata),
     .s_axis_tkeep(mbq_request_tkeep),

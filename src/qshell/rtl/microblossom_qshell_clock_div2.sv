@@ -7,6 +7,7 @@
 module microblossom_qshell_clock_div2 (
     input  logic aclk,
     input  logic aresetn,
+    output logic fast_aresetn,
     output logic slow_clk,
     output logic slow_aresetn
 );
@@ -35,7 +36,18 @@ BUFGCE_DIV #(
 `endif
 
 // Asynchronous assertion prevents either domain from running during parent
-// reset; deassertion is synchronized to the generated slow clock.
+// reset; deassertion is synchronized independently in each local domain. The
+// local fast reset also prevents Coyote's high-fanout reset net from crossing
+// the static/application boundary to every accelerator register.
+(* ASYNC_REG = "TRUE" *) logic [1:0] fast_reset_sync;
+always_ff @(posedge aclk or negedge aresetn) begin
+    if (!aresetn) begin
+        fast_reset_sync <= 2'b00;
+    end else begin
+        fast_reset_sync <= {fast_reset_sync[0], 1'b1};
+    end
+end
+
 (* ASYNC_REG = "TRUE" *) logic [1:0] slow_reset_sync;
 always_ff @(posedge slow_clk or negedge aresetn) begin
     if (!aresetn) begin
@@ -45,6 +57,7 @@ always_ff @(posedge slow_clk or negedge aresetn) begin
     end
 end
 
+assign fast_aresetn = fast_reset_sync[1];
 assign slow_aresetn = slow_reset_sync[1];
 
 endmodule

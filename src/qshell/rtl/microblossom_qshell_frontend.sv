@@ -266,19 +266,6 @@ always_ff @(posedge aclk) begin
     if (!aresetn) begin
         state <= ST_ACCEPT;
         job_active <= 1'b0;
-        active_request_id <= '0;
-        expected_sequence <= '0;
-        expected_operations <= '0;
-        completed_operations <= '0;
-        operation_sequence <= '0;
-        operation_width <= '0;
-        operation_lane <= '0;
-        operation_address <= '0;
-        operation_write_data <= '0;
-        operation_tid <= '0;
-        aw_done <= 1'b0;
-        w_done <= 1'b0;
-        timeout_count <= '0;
         response_valid <= 1'b0;
     end else begin
         if (response_fire) begin

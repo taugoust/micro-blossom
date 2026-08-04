@@ -1065,7 +1065,11 @@
                 test -s "$app/vfpga_top.svh"
                 test -s "$app/init_ip.tcl"
                 test -s "$app/microblossom_qshell_timing.xdc"
-                grep -F 'set_false_path -to $mb_slow_reset_clear_pins' \
+                grep -F 'set_false_path -to $mb_local_reset_clear_pins' \
+                  "$app/microblossom_qshell_timing.xdc" >/dev/null
+                grep -F 'set_max_delay -datapath_only 4.000' \
+                  "$app/microblossom_qshell_timing.xdc" >/dev/null
+                grep -F 'set_bus_skew 8.000' \
                   "$app/microblossom_qshell_timing.xdc" >/dev/null
                 grep -F 'USED_IN_IMPLEMENTATION true' "$app/init_ip.tcl" >/dev/null
                 grep -F 'vfpga_src_dir/hdl' \
