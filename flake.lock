@@ -795,11 +795,11 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1785850046,
-        "narHash": "sha256-WMc9DSU32xEYbDFjOpbm/nzjL2J1iUQHKDCij4qPWBA=",
+        "lastModified": 1785851631,
+        "narHash": "sha256-E6Hwk/vwultVL3FwE/F7a+vEY8LkjUGOu7pKh9TNIFo=",
         "ref": "master",
-        "rev": "e7efd656629172e67e71ceab71b3349a54689545",
-        "revCount": 47,
+        "rev": "459e81aab8747d7bc66200164154b7cc6bed0fc1",
+        "revCount": 48,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
