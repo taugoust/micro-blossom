@@ -18,7 +18,7 @@
     };
     coyote.follows = "qshell/coyote";
     coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/7fcfb0a0e42c47ddfcdcea9089832efc5486288f";
+      url = "github:TUM-DSE/coyote-nix/57ccabd8f6aac883ab916ead842561fcde2d5262";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
