@@ -71,6 +71,7 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-scala`: offline-built Scala/SpinalHDL generator JAR;
 - `microblossom-qshell-protocol`: tested MBQ1 codec, QShell ABI-2 beat adapter, and process-backed Coyote beat link;
 - `microblossom-qshell-coyote-bridge`: packaged one-sided Coyote bridge for exact stream beat boundaries (`LOCAL_READ` host-to-FPGA, `LOCAL_WRITE` FPGA-to-host);
+- `microblossom-d3-qshell-coyote-run`: canonical native Rust d3 workload connected to the physical Coyote driver bridge;
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
 - `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
 - `microblossom-d3-qshell-core`: provenance-carrying ABI-2 envelope, MBQ1 frontend, generated d3 accelerator, and application clock composition;
@@ -88,6 +89,7 @@ nix build .#microblossom-host
 nix build .#microblossom-scala
 nix build .#microblossom-qshell-protocol
 nix build .#checks.x86_64-linux.qshell-coyote-bridge
+nix run .#microblossom-d3-qshell-coyote-run -- --help
 nix build .#microblossom-d3-graph
 nix build .#microblossom-d3-rtl
 nix build .#checks.x86_64-linux.d3-behavior-smoke
@@ -112,7 +114,15 @@ nix fmt -- flake.nix src/cpu/embedded/build.rs \
   src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
 ```
 
-The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware. The behavior smoke runs the embedded Rust hardware contract against a Scala-generated 64-bit AXI4 accelerator under Verilator 5.014 and preserves its instruction/readout log as the check output. The golden decode uses defect vertex `[0]`, produces correction edge `[2]` with weight `2`, verifies that correction's syndrome, and compares its weight with the serial MWPM reference. The board-independent QShell frontend check validates MBQ1 record framing, lifecycle, AXI translation, backpressure, reset, errors, and timeout quarantine. The clock check verifies the simulation model for an application-local Xilinx `BUFGCE_DIV/2` slow domain with asynchronous reset assertion and synchronized deassertion; hardware synthesis/routing remains an MB1.3 acceptance gate. The envelope check consumes generated constants from pinned QShell ABI 2 and verifies two-beat request/response framing, metadata transformation, sequencing, backpressure, and malformed-record recovery. The core check exercises MBQ1 directly against the generated accelerator. The application check combines the envelope, clock, frontend, and accelerator and verifies hardware-info and completion transactions through the complete shell-facing hierarchy. The QShell golden check runs the same d3 primal result through the native `RecordLink` transport against the generated accelerator. The U280 xdb check launches the packaged resident-QShell/MicroBlossom Coyote simulation and runs all 14 operations through the process-backed ABI-2 transport. Its output retains the canonical PASS marker, simulation time, Coyote status, xdb provenance, and a debug bundle as normal Nix check artifacts.
+After an authorized operator has deployed the matching QShell-enabled shell and `microblossom-d3-qshell-u280-app` partial image, inserted its matching Coyote driver, configured huge pages, and made vFPGA 0 available as `/dev/coyote_fpga_0_v0`, run the physical host path with:
+
+```sh
+nix run .#microblossom-d3-qshell-coyote-run -- --vfpga 0 --timeout-ms 10000
+```
+
+The accepted result is exactly `MICROBLOSSOM_D3_QSHELL_COYOTE_PASS defects=[0] correction_edges=[2] total_weight=2 operations=14`. This command runs the native Rust primal solver locally, spawns the packaged C++ Coyote bridge, allocates driver-backed huge-page memory, and exchanges two-beat QShell ABI-2/MBQ1 records over Coyote's host streams. Packaging and simulation validate this complete software composition without a device; successful execution against the physical driver and FPGA is still required for runtime acceptance.
+
+The canonical fixture is declared in `nix/fixtures/code-capacity-repetition-d3.json`. Its graph hash and dimensions are checked during the build so generator/configuration changes cannot silently alter downstream hardware. The behavior smoke runs the embedded Rust hardware contract against a Scala-generated 64-bit AXI4 accelerator under Verilator 5.014 and preserves its instruction/readout log as the check output. The golden decode uses defect vertex `[0]`, produces correction edge `[2]` with weight `2`, verifies that correction's syndrome, and compares its weight with the serial MWPM reference. The board-independent QShell frontend check validates MBQ1 record framing, lifecycle, AXI translation, backpressure, reset, errors, and timeout quarantine. The clock check verifies the simulation model for an application-local Xilinx `BUFGCE_DIV/2` slow domain with asynchronous reset assertion and synchronized deassertion; the accepted U280 route closes setup, hold, and pulse-width timing. The envelope check consumes generated constants from pinned QShell ABI 2 and verifies two-beat request/response framing, metadata transformation, sequencing, backpressure, and malformed-record recovery. The core check exercises MBQ1 directly against the generated accelerator. The application check combines the envelope, clock, frontend, and accelerator and verifies hardware-info and completion transactions through the complete shell-facing hierarchy. The QShell golden check runs the same d3 primal result through the native `RecordLink` transport against the generated accelerator. The U280 xdb check launches the packaged resident-QShell/MicroBlossom Coyote simulation and runs all 14 operations through the process-backed ABI-2 transport. Its output retains the canonical PASS marker, simulation time, Coyote status, xdb provenance, and a debug bundle as normal Nix check artifacts.
 
 Rust derivations use the locked GitHub release of Crane to vendor dependencies and share one dependency-artifact build across the native host, simulator runner, and golden decode. Fenix still supplies the pinned nightly `2023-11-16` toolchain; Crane does not replace the toolchain pin. The standalone QShell protocol crate has a separate dependency artifact and package contract.
 

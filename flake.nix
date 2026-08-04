@@ -723,6 +723,25 @@
             };
           };
 
+          microblossomD3QshellCoyoteRun = pkgs.writeShellApplication {
+            name = "microblossom-d3-qshell-coyote-run";
+            runtimeInputs = [
+              microblossomHost
+              microblossomQshellCoyoteBridge
+            ];
+            text = ''
+              exec microblossom_d3_qshell_coyote \
+                --bridge ${microblossomQshellCoyoteBridge}/bin/microblossom-qshell-coyote-bridge \
+                "$@"
+            '';
+            meta = {
+              description = "Canonical d3 MicroBlossom workload through the physical Coyote driver";
+              license = lib.licenses.mit;
+              platforms = systems;
+              mainProgram = "microblossom-d3-qshell-coyote-run";
+            };
+          };
+
           mkMicroblossomXdb =
             board:
             let
@@ -822,6 +841,7 @@
           microblossom-scala = microblossomScala;
           microblossom-qshell-protocol = microblossomQshellProtocol;
           microblossom-qshell-coyote-bridge = microblossomQshellCoyoteBridge;
+          microblossom-d3-qshell-coyote-run = microblossomD3QshellCoyoteRun;
           microblossom-xdb-u280 = microblossomXdb.u280;
           microblossom-xdb-v80 = microblossomXdb.v80;
           microblossom-qshell-u280-xdb-bridge = qshellXdbBridges.u280;
@@ -865,6 +885,7 @@
           fixture = self.packages.${system}.microblossom-d3-graph;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
+          coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
           scala = self.packages.${system}.microblossom-scala;
           simRunner = self.packages.${system}.microblossom-d3-sim-runner;
           rtl = self.packages.${system}.microblossom-d3-rtl;
@@ -1193,6 +1214,9 @@
 
           rust-package-contract = pkgs.runCommand "microblossom-rust-package-contract" { } ''
             test -x ${coyoteBridge}/bin/microblossom-qshell-coyote-bridge
+            test -x ${coyoteRunner}/bin/microblossom-d3-qshell-coyote-run
+            ${coyoteRunner}/bin/microblossom-d3-qshell-coyote-run --help \
+              | grep -F 'Run the canonical d3 workload through a QShell Coyote beat bridge' >/dev/null
             test -x ${host}/bin/micro_blossom
             test -x ${host}/bin/generate_nix_d3_fixture
             test -x ${host}/bin/microblossom_d3_qshell_coyote
@@ -1389,6 +1413,7 @@
               };
               packages = [
                 qshell.packages.${system}."qshell-xdb-${board}"
+                self.packages.${system}.microblossom-d3-qshell-coyote-run
                 self.packages.${system}."microblossom-xdb-${board}"
                 self.packages.${system}."microblossom-d3-qshell-${board}-xdb-run"
               ];
