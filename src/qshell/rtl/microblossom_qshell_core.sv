@@ -120,7 +120,8 @@ MicroBlossomBus inst_accelerator (
     .s0_rresp(m_axi_rresp),
     .s0_rlast(m_axi_rlast),
     .slow_clk(slow_clk),
-    .reset(!slow_aresetn),
+    .slow_reset(!slow_aresetn),
+    .reset(!aresetn),
     .clk(aclk)
 );
 

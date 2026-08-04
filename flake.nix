@@ -576,6 +576,8 @@
                     timeoutCyclesDefault: 1024,
                     acceleratorClockDivideBy: 2,
                     acceleratorClockInput: "slow_clk",
+                    acceleratorResetStrategy: "independent-fast-slow",
+                    acceleratorCdcPayloadMemory: "dual-clock-block-ram",
                     applicationClockInputMHz: {
                       u280: 250,
                       v80: 333
@@ -1063,7 +1065,7 @@
                 test -s "$app/vfpga_top.svh"
                 test -s "$app/init_ip.tcl"
                 test -s "$app/microblossom_qshell_timing.xdc"
-                grep -F 'set_clock_groups -name microblossom_accelerator_cdc -asynchronous' \
+                grep -F 'set_false_path -to $mb_slow_reset_clear_pins' \
                   "$app/microblossom_qshell_timing.xdc" >/dev/null
                 grep -F 'USED_IN_IMPLEMENTATION true' "$app/init_ip.tcl" >/dev/null
                 grep -F 'vfpga_src_dir/hdl' \
@@ -1275,6 +1277,8 @@
                 test -s "$root/graph-manifest.json"
                 test -s "$root/rtl-manifest.json"
                 grep -E '^module MicroBlossomBus([ (]|$)' "$root/MicroBlossomBus.v" >/dev/null
+                grep -E '^  input +slow_reset[, ]' "$root/MicroBlossomBus.v" >/dev/null
+                test "$(grep -c 'ram_style = \"block\"' "$root/MicroBlossomBus.v")" = 2
                 test "$(jq -er '.graphSha256' "$root/rtl-manifest.json")" = \
                   "$(jq -er '.generated.graphSha256' "$root/graph-manifest.json")"
                 test "$(sha256sum "$root/MicroBlossomBus.v" | cut -d' ' -f1)" = \

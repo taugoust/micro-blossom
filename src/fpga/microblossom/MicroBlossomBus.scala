@@ -183,11 +183,13 @@ case class MicroBlossomBus[T <: IMasterSlave, F <: BusSlaveFactoryDelayed](
     hardwareInfo.errorCounter := hardwareInfo.errorCounter + 1
   }
 
+  val slowReset = if (isSyncClk) ClockDomain.current.readResetWire else in(Bool())
+  if (!isSyncClk) slowReset.setName("slow_reset")
   val slowClockDomain: ClockDomain = if (isSyncClk) { clockDomain }
   else {
     ClockDomain(
       clock = slowClk,
-      reset = ClockDomain.current.readResetWire,
+      reset = slowReset,
       config = ClockDomainConfig(
         clockEdge = RISING,
         resetKind = SYNC,
@@ -216,6 +218,7 @@ case class MicroBlossomBus[T <: IMasterSlave, F <: BusSlaveFactoryDelayed](
         pushClock = clockDomain,
         popClock = slowClockDomain
       )
+      fifo.ram.addAttribute("ram_style", "block")
       io.push = fifo.io.push
       io.pop = fifo.io.pop
     }
@@ -232,6 +235,7 @@ case class MicroBlossomBus[T <: IMasterSlave, F <: BusSlaveFactoryDelayed](
         pushClock = slowClockDomain,
         popClock = clockDomain
       )
+      fifo.ram.addAttribute("ram_style", "block")
       io.push = fifo.io.push
       io.pop = fifo.io.pop
     }
