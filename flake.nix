@@ -1407,6 +1407,7 @@
               inherit pkgs;
               tools = coyoteTools;
               coyoteRoot = coyote;
+              shellHook = doctor.hostFpgaEnvShellFragment;
               withXilinx = true;
               board = doctor.boards.${board} // {
                 xilinxVersion = doctor.boards.${board}.simXilinxVersion;
