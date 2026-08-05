@@ -76,8 +76,9 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `microblossom-d3-graph`: canonical code-capacity repetition d3 graph, configuration, and provenance manifest;
 - `microblossom-d3-rtl`: generated 64-bit AXI4 `MicroBlossomBus.v` and graph/generator/RTL hashes;
 - `microblossom-d3-qshell-core`: provenance-carrying ABI-2 envelope, MBQ1 frontend, generated d3 accelerator, and application clock composition;
+- `qshell-u280-shell-synth`: the exact pinned QShell U280 shell synthesis gate, without placement or routing;
 - `qshell-u280-shell`: the exact pinned full QShell U280 shell required before loading the application partial;
-- `microblossom-d3-qshell-{u280,v80}-app-synth`: early synthesis stages against the exact pinned QShell shells;
+- `microblossom-d3-qshell-{u280,v80}-app-synth`: application synthesis stages against the corresponding routed QShell shells;
 - `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed application/partial-image packages;
 - `microblossom-d3-qshell-{u280,v80}-sim`: packaged Coyote/QShell behavioral simulation runtimes;
 - `microblossom-d3-qshell-{u280,v80}-xdb-run`: canonical host workload runners for active xdb sessions;
@@ -104,6 +105,7 @@ nix build .#checks.x86_64-linux.qshell-core
 nix build .#checks.x86_64-linux.qshell-application
 nix build .#checks.x86_64-linux.d3-qshell-golden-decode
 nix build .#checks.x86_64-linux.qshell-u280-xdb-d3
+nix build .#qshell-u280-shell-synth
 nix build .#microblossom-d3-qshell-u280-app-synth
 nix build .#microblossom-d3-qshell-v80-app-synth
 nix flake check
@@ -115,6 +117,8 @@ nix run .#update-qshell-rust-abi
 nix fmt -- flake.nix src/cpu/embedded/build.rs \
   src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs
 ```
+
+Before another long U280 route, build `qshell-u280-shell-synth` and inspect its resource and timing reports. The application synthesis output already depends on a routed shell, so it is not a shell-synthesis gate.
 
 Before authorized U280 deployment on `rose`, materialize the pinned driver and exact full QShell shell:
 

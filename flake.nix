@@ -868,6 +868,7 @@
           microblossom-d3-qshell-u280-sim = d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim";
           microblossom-d3-qshell-v80-sim = d3QshellSimulationPackages."microblossom-d3-qshell-v80-sim";
           qshell-u280-shell = qshellU280Shell;
+          qshell-u280-shell-synth = qshellU280Shell.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-u280-app = d3QshellApps.u280;
           microblossom-d3-qshell-v80-app = d3QshellApps.v80;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
