@@ -44,7 +44,7 @@ Every record carries the exact graph SHA-256 so a shell/application can reject o
 
 ## Current QShell envelope
 
-`rtl/microblossom_qshell_envelope.sv` consumes QShell's generated SystemVerilog constants from pinned `master` revision `459e81aab8747d7bc66200164154b7cc6bed0fc1`; MicroBlossom does not redefine ABI offsets, classes, flags, or schema IDs. Each command uses one full header beat containing the first 16 MBQ1 bytes and one final 48-byte continuation. The adapter validates the syndrome class, command schema, exact 64-byte payload, contiguous keep masks, and `EndJob`/`END_OF_ROUND` relationship before presenting one complete internal MBQ1 record.
+`rtl/microblossom_qshell_envelope.sv` consumes QShell's generated SystemVerilog constants from pinned `master` revision `044f46242a20a102573b01b0cae0588ef24ad0d1`; MicroBlossom does not redefine ABI offsets, classes, flags, or schema IDs. Each command uses one full header beat containing the first 16 MBQ1 bytes and one final 48-byte continuation. The adapter validates the syndrome class, command schema, exact 64-byte payload, contiguous keep masks, and `EndJob`/`END_OF_ROUND` relationship before presenting one complete internal MBQ1 record.
 
 A response reverses the request endpoints, preserves context/round/capability/route identity, uses the MicroBlossom response schema and correction class, and emits the 64-byte MBQ1 response in the same two-beat shape. Correction sequence numbers are independent of command sequence numbers and reset after terminal `Completion` or `Error` records. The adapter serializes commands until the internal frontend either returns a response or becomes ready again after a response-free operation, keeping request metadata unambiguous under backpressure.
 
