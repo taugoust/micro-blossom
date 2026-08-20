@@ -873,7 +873,7 @@
                   --application-metadata ${d3QshellCoprocessorApp}/metadata/app.json \
                   --runtime-identity ${r5ServiceFirmware}/metadata/runtime-identity \
                   --output "$out" \
-                  --qshell-revision 632899e340a02ad81027468f5e0f54e4dce2e08c \
+                  --qshell-revision 691b4464c4587e0b8c2af216f7df7529cedebd22 \
                   --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
                   --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
                   --implementation-revision 3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
@@ -1304,7 +1304,7 @@
                   --application-metadata app.json \
                   --runtime-identity runtime-identity \
                   --output generated \
-                  --qshell-revision 632899e340a02ad81027468f5e0f54e4dce2e08c \
+                  --qshell-revision 691b4464c4587e0b8c2af216f7df7529cedebd22 \
                   --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
                   --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
                   --implementation-revision 3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
@@ -1372,7 +1372,7 @@
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
                 test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  632899e340a02ad81027468f5e0f54e4dce2e08c
+                  691b4464c4587e0b8c2af216f7df7529cedebd22
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
@@ -1424,7 +1424,7 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  632899e340a02ad81027468f5e0f54e4dce2e08c
+                  691b4464c4587e0b8c2af216f7df7529cedebd22
                 touch "$out"
               '';
 
@@ -1437,7 +1437,7 @@
               == qshell.packages.${system}.qshell-v80-coprocessor-shell;
             pkgs.runCommand "microblossom-qshell-coprocessor-package" { nativeBuildInputs = [ pkgs.jq ]; } ''
               test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                632899e340a02ad81027468f5e0f54e4dce2e08c
+                691b4464c4587e0b8c2af216f7df7529cedebd22
               test "$(jq -er '.coprocessor.logicalPort' \
                 ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 0
               test "$(jq -er '.coprocessor.streamAbi' \
@@ -1498,7 +1498,7 @@
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
                 test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
-                  632899e340a02ad81027468f5e0f54e4dce2e08c
+                  691b4464c4587e0b8c2af216f7df7529cedebd22
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
