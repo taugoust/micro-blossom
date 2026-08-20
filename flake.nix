@@ -876,7 +876,7 @@
                   --qshell-revision 691b4464c4587e0b8c2af216f7df7529cedebd22 \
                   --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
                   --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
-                  --implementation-revision 3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
+                  --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
                 ln -s ${d3QshellCoprocessorApp} "$out/packages/application"
                 ln -s ${qshellV80CoprocessorShell} "$out/packages/shell"
                 ln -s ${r5ServiceFirmware} "$out/packages/firmware"
@@ -1307,7 +1307,7 @@
                   --qshell-revision 691b4464c4587e0b8c2af216f7df7529cedebd22 \
                   --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
                   --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
-                  --implementation-revision 3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
+                  --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
                 test "$(jq -er '.placement.bitstream_id' generated/decoder-contract.json)" = \
                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 test "$(jq -er '.provenance.shell_compatibility_id' generated/decoder-contract.json)" = \
