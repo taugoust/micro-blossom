@@ -73,3 +73,18 @@ The CPU-assisted V80 application uses one 96-byte, two-beat QShell record per de
 The packaged `microblossom_d3_coprocessor` host executable emits the canonical request through the existing Coyote process bridge and verifies correction edge `[2]`. It configures the bridge for the coarse record's 32-byte continuation; the host-driven MBQ1 path retains its 48-byte continuation.
 
 After the user completes the provider shell and application route, `microblossom-d3-v80-coprocessor-compatibility-bundle` reads their actual shell compatibility and application artifact IDs, combines them with the firmware's embedded runtime identity, validates the resulting strict QShell decoder contract, and links the immutable shell, application, firmware, host protocol, and Coyote bridge packages. Its manifest explicitly leaves physical acceptance and image composition false. The host-driven U280/V80 packages remain available under their existing names; no fine-grained MMIO operation crosses PCIe in the CPU-assisted package.
+
+The post-deployment control sequence is explicit. First read the live provider generation and image identity, then bind logical port 0 with that exact generation. Configure the QShell service/route from the bundle's `decoder-contract.json`, using request/result schemas `131075`/`131076`, before launching the workload:
+
+```sh
+nix run ../qshell#qshell -- coprocessor-control --operation provider
+nix run ../qshell#qshell -- coprocessor-control --operation bind \
+  --endpoint 1 --endpoint-generation <live-generation>
+
+./result/packages/host-protocol/bin/microblossom_d3_coprocessor \
+  --bridge ./result/packages/coyote-bridge/bin/microblossom-qshell-coyote-bridge \
+  --context <context> --round <round> --source-endpoint <source> \
+  --decoder-endpoint <decoder> --capability <capability>
+```
+
+`qshell coprocessor-control` also exposes bounded binding read, quiesce, unbind, and recover operations. The QShell admission API remains the authority for service lifecycle and route ownership; the CLI is the physical bring-up surface, not a bypass of those checks.
