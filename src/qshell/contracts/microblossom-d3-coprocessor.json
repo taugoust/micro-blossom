@@ -1,0 +1,85 @@
+{
+  "contract_version": 2,
+  "service": {
+    "name": "microblossom-d3-r5",
+    "family": "microblossom",
+    "quality_class": "exact"
+  },
+  "qec": {
+    "code_family": "repetition-code-capacity",
+    "problem_sizes": [3],
+    "decoder_class": "hybrid"
+  },
+  "placement": {
+    "targets": ["v80"],
+    "slot_classes": ["coyote-region-0"],
+    "bitstream_id": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "resources": {
+    "luts": 10000,
+    "registers": 16000,
+    "bram36": 24,
+    "uram": 0,
+    "dsps": 0
+  },
+  "auxiliary": {
+    "kind": "coprocessor",
+    "exclusive": true,
+    "runtime": null,
+    "time_sharing_model": "exclusive",
+    "coprocessor": {
+      "logical_port": 0,
+      "stream_abi": 1,
+      "mmio_abi": 1,
+      "runtime_abi": "baremetal",
+      "firmware_abi": "coyote-r5-provider-mmio-v1",
+      "image_identity": "0000000000000000000000000000000000000000000000000000000000000000",
+      "max_packet_beats": 4,
+      "exclusive": true
+    }
+  },
+  "syndrome_interface": {
+    "schema_id": 131075,
+    "schema_name": "microblossom-d3-decode-request",
+    "record_classes": ["syndrome"],
+    "max_payload_bytes": 48,
+    "requires_end_of_round": true
+  },
+  "correction_interface": {
+    "schema_id": 131076,
+    "schema_name": "microblossom-d3-decode-result",
+    "record_classes": ["correction"],
+    "max_payload_bytes": 48,
+    "requires_end_of_round": true
+  },
+  "context_model": {
+    "kind": "single",
+    "max_contexts": 1,
+    "reset_between_tenants": true
+  },
+  "queue_model": {
+    "kind": "exclusive",
+    "max_streams": 1,
+    "max_records_per_stream": 4,
+    "arbitration": "none",
+    "bound_formula": null
+  },
+  "timing": {
+    "clock_hz": 333000000,
+    "latency_bound_ns": 10000000,
+    "service_rate_records_per_second": 100,
+    "output_window_rounds": 0,
+    "bound_kind": "worst_case"
+  },
+  "lifecycle": {
+    "commands": ["identify", "start", "quiesce", "reset", "health"],
+    "quiesce_requires_empty": true,
+    "reset_clears_context": true
+  },
+  "provenance": {
+    "record_abi": 2,
+    "control_abi": 1,
+    "shell_compatibility_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "source_revision": "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"
+  }
+}

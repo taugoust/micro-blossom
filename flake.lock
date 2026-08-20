@@ -3,17 +3,17 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1787229991,
-        "narHash": "sha256-NER1akebCH6BIE8t5blcAhSqPNKcHgTuiUx4aNAhZJc=",
+        "lastModified": 1787234907,
+        "narHash": "sha256-Y6CW3KrPT1FIh4tsq8xzkT/AcThDw2sD7aquKhDt1Vo=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "a8428c3afb9571e672634228fb1a7e0c1a6e72b0",
+        "rev": "6af6ae5fd132a0dfb39d70f41530c41259b224c0",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "a8428c3afb9571e672634228fb1a7e0c1a6e72b0",
+        "rev": "6af6ae5fd132a0dfb39d70f41530c41259b224c0",
         "type": "github"
       }
     },
@@ -759,11 +759,11 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1787231538,
-        "narHash": "sha256-gNl8NPMqicYIEakdn/7WZu6yudC/TANzyKcXdBeGtyY=",
+        "lastModified": 1787235064,
+        "narHash": "sha256-W9da5toJd7OeGdq2GHQZfVlTspHeY6MadlZwlJMseEk=",
         "ref": "coprocessor-hybrid-services",
-        "rev": "562ab968c19529443ecf8015c598418d3c5404a1",
-        "revCount": 67,
+        "rev": "632899e340a02ad81027468f5e0f54e4dce2e08c",
+        "revCount": 68,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },

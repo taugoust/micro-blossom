@@ -799,6 +799,8 @@
             ];
           };
 
+          coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.json;
+
           d3QshellCoprocessorAppHwSource =
             pkgs.runCommand "microblossom-d3-qshell-coprocessor-app-hw-source" { }
               ''
@@ -857,6 +859,35 @@
               integrationState = "logical-port-connected";
             };
           };
+
+          d3CoprocessorCompatibilityBundle =
+            pkgs.runCommand "microblossom-d3-v80-coprocessor-compatibility-bundle"
+              {
+                nativeBuildInputs = [ pkgs.python3Packages.jsonschema ];
+              }
+              ''
+                mkdir -p "$out/metadata" "$out/packages"
+                python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                  --template ${coprocessorContractTemplate} \
+                  --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                  --application-metadata ${d3QshellCoprocessorApp}/metadata/app.json \
+                  --runtime-identity ${r5ServiceFirmware}/metadata/runtime-identity \
+                  --output "$out" \
+                  --qshell-revision 632899e340a02ad81027468f5e0f54e4dce2e08c \
+                  --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
+                  --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
+                  --implementation-revision 3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
+                ln -s ${d3QshellCoprocessorApp} "$out/packages/application"
+                ln -s ${qshellV80CoprocessorShell} "$out/packages/shell"
+                ln -s ${r5ServiceFirmware} "$out/packages/firmware"
+                ln -s ${microblossomQshellProtocol} "$out/packages/host-protocol"
+                ln -s ${microblossomQshellCoyoteBridge} "$out/packages/coyote-bridge"
+                cp ${d3QshellCoprocessorApp}/metadata/app.json "$out/metadata/"
+                cp ${r5ServiceFirmware}/metadata/firmware.json "$out/metadata/"
+                (cd "$out" && sha256sum decoder-contract.json manifest.json \
+                  metadata/app.json metadata/firmware.json) \
+                  > "$out/metadata/artifacts.sha256"
+              '';
 
           microblossomQshellCoyoteBridge = pkgs.stdenv.mkDerivation {
             pname = "microblossom-qshell-coyote-bridge";
@@ -1034,6 +1065,7 @@
           microblossom-d3-qshell-v80-coprocessor-app = d3QshellCoprocessorApp;
           microblossom-d3-r5-service-source = r5ServiceSource;
           microblossom-d3-r5-service-firmware = r5ServiceFirmware;
+          microblossom-d3-v80-coprocessor-compatibility-bundle = d3CoprocessorCompatibilityBundle;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-coprocessor-app-synth =
@@ -1231,6 +1263,60 @@
                 touch "$out"
               '';
 
+          qshell-coprocessor-contract =
+            pkgs.runCommand "microblossom-qshell-coprocessor-contract-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.jq
+                  pkgs.python3Packages.jsonschema
+                ];
+              }
+              ''
+                python3 - ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                  ${./src/qshell/contracts/microblossom-d3-coprocessor.json} <<'PY'
+                import json
+                import sys
+                import jsonschema
+                schema = json.load(open(sys.argv[1]))
+                contract = json.load(open(sys.argv[2]))
+                jsonschema.Draft202012Validator(schema).validate(contract)
+                PY
+                contract=${./src/qshell/contracts/microblossom-d3-coprocessor.json}
+                test "$(jq -er '.syndrome_interface.schema_id' "$contract")" = 131075
+                test "$(jq -er '.correction_interface.schema_id' "$contract")" = 131076
+                test "$(jq -er '.auxiliary.coprocessor.firmware_abi' "$contract")" = \
+                  coyote-r5-provider-mmio-v1
+                test "$(jq -er '.provenance.source_revision' "$contract")" = \
+                  3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
+                runtime_identity='${
+                  self.packages.${system}.microblossom-d3-r5-service-firmware.coyoteR5Firmware.runtimeIdentity
+                }'
+                test "$runtime_identity" != \
+                  0000000000000000000000000000000000000000000000000000000000000000
+                cat > app.json <<'EOF'
+                {"application":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                 "shell":{"compatibilityId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+                EOF
+                printf '%s\n' "$runtime_identity" > runtime-identity
+                python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                  --template "$contract" \
+                  --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                  --application-metadata app.json \
+                  --runtime-identity runtime-identity \
+                  --output generated \
+                  --qshell-revision 632899e340a02ad81027468f5e0f54e4dce2e08c \
+                  --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
+                  --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
+                  --implementation-revision 3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
+                test "$(jq -er '.placement.bitstream_id' generated/decoder-contract.json)" = \
+                  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                test "$(jq -er '.provenance.shell_compatibility_id' generated/decoder-contract.json)" = \
+                  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+                test "$(jq -er '.identities.firmwareRuntime' generated/manifest.json)" = \
+                  "$runtime_identity"
+                cp -r generated "$out"
+              '';
+
           r5-service-model =
             pkgs.runCommand "microblossom-r5-service-model-check" { nativeBuildInputs = [ pkgs.stdenv.cc ]; }
               ''
@@ -1286,7 +1372,7 @@
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
                 test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  562ab968c19529443ecf8015c598418d3c5404a1
+                  632899e340a02ad81027468f5e0f54e4dce2e08c
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
@@ -1338,7 +1424,7 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  562ab968c19529443ecf8015c598418d3c5404a1
+                  632899e340a02ad81027468f5e0f54e4dce2e08c
                 touch "$out"
               '';
 
@@ -1351,7 +1437,7 @@
               == qshell.packages.${system}.qshell-v80-coprocessor-shell;
             pkgs.runCommand "microblossom-qshell-coprocessor-package" { nativeBuildInputs = [ pkgs.jq ]; } ''
               test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                562ab968c19529443ecf8015c598418d3c5404a1
+                632899e340a02ad81027468f5e0f54e4dce2e08c
               test "$(jq -er '.coprocessor.logicalPort' \
                 ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 0
               test "$(jq -er '.coprocessor.streamAbi' \
@@ -1412,7 +1498,7 @@
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
                 test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
-                  562ab968c19529443ecf8015c598418d3c5404a1
+                  632899e340a02ad81027468f5e0f54e4dce2e08c
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
