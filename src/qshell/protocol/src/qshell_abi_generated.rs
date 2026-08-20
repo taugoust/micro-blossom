@@ -22,6 +22,8 @@ pub mod schema {
     pub const HELIOS_SPARSE_CORRECTION: u32 = 0x10002;
     pub const MICROBLOSSOM_COMMAND: u32 = 0x20001;
     pub const MICROBLOSSOM_RESPONSE: u32 = 0x20002;
+    pub const MICROBLOSSOM_DECODE_REQUEST: u32 = 0x20003;
+    pub const MICROBLOSSOM_DECODE_RESULT: u32 = 0x20004;
     pub const PAULI_FRAME_XOR: u32 = 0x30001;
     pub const CONTROL: u32 = 0xffff0001;
     pub const ERROR: u32 = 0xffff0002;

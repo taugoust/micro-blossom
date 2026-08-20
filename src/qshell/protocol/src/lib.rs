@@ -380,13 +380,29 @@ impl CoyoteProcessBeatLink {
         vfpga_id: i32,
         timeout_ms: u64,
     ) -> Result<Self, CoyoteProcessError> {
+        Self::spawn_with_continuation(executable, vfpga_id, timeout_ms, 48)
+    }
+
+    pub fn spawn_with_continuation(
+        executable: impl AsRef<std::ffi::OsStr>,
+        vfpga_id: i32,
+        timeout_ms: u64,
+        continuation_bytes: usize,
+    ) -> Result<Self, CoyoteProcessError> {
         use std::process::Stdio;
 
+        if continuation_bytes == 0 || continuation_bytes > qshell_abi::BEAT_BYTES {
+            return Err(CoyoteProcessError::Bridge(
+                "response continuation must contain 1..64 bytes".to_owned(),
+            ));
+        }
         let mut child = std::process::Command::new(executable)
             .arg("--vfpga")
             .arg(vfpga_id.to_string())
             .arg("--timeout-ms")
             .arg(timeout_ms.to_string())
+            .arg("--continuation-bytes")
+            .arg(continuation_bytes.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()?;
@@ -1133,6 +1149,171 @@ impl fmt::Display for DecodeError {
 
 impl std::error::Error for DecodeError {}
 
+pub const COPROCESSOR_PAYLOAD_BYTES: usize = 48;
+pub const COPROCESSOR_PACKET_BYTES: usize = qshell_abi::HEADER_BYTES + COPROCESSOR_PAYLOAD_BYTES;
+pub const MAX_DECODE_DEFECTS: usize = 4;
+pub const MAX_CORRECTION_EDGES: usize = 2;
+const DECODE_REQUEST_MAGIC: [u8; 4] = *b"MBJ1";
+const DECODE_RESULT_MAGIC: [u8; 4] = *b"MBR1";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodeRequest {
+    pub graph_id: GraphId,
+    pub defects: Vec<u16>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodeResult {
+    pub graph_id: GraphId,
+    pub status: u16,
+    pub accelerator_operations: u16,
+    pub correction_edges: Vec<u16>,
+}
+
+pub struct CoprocessorQshellLink<Link: BeatLink> {
+    link: Link,
+    route: QshellRoute,
+    round_id: u32,
+}
+
+impl<Link: BeatLink> CoprocessorQshellLink<Link> {
+    pub fn new(link: Link, route: QshellRoute) -> Self {
+        Self {
+            link,
+            round_id: route.initial_round_id,
+            route,
+        }
+    }
+
+    pub fn decode(
+        &mut self,
+        request: &DecodeRequest,
+    ) -> Result<DecodeResult, QshellLinkError<Link::Error>> {
+        if request.defects.len() > MAX_DECODE_DEFECTS
+            || request.defects.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(QshellLinkError::MalformedEnvelope);
+        }
+        let mut payload = [0_u8; COPROCESSOR_PAYLOAD_BYTES];
+        payload[..4].copy_from_slice(&DECODE_REQUEST_MAGIC);
+        put_u16(&mut payload, 4, 1);
+        put_u16(&mut payload, 6, request.defects.len() as u16);
+        payload[8..40].copy_from_slice(&request.graph_id);
+        for (index, defect) in request.defects.iter().enumerate() {
+            put_u16(&mut payload, 40 + 2 * index, *defect);
+        }
+        let mut first = AxisBeat {
+            data: [0; qshell_abi::BEAT_BYTES],
+            keep: u64::MAX,
+            last: false,
+        };
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::MAGIC,
+            qshell_abi::MAGIC,
+        );
+        first.data[qshell_abi::offset::ABI_VERSION] = qshell_abi::VERSION as u8;
+        first.data[qshell_abi::offset::RECORD_CLASS] = qshell_abi::record_class::SYNDROME;
+        put_u16(
+            &mut first.data,
+            qshell_abi::offset::FLAGS,
+            qshell_abi::flag::END_OF_ROUND,
+        );
+        put_u16(
+            &mut first.data,
+            qshell_abi::offset::HEADER_BYTES,
+            qshell_abi::HEADER_BYTES as u16,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::PAYLOAD_BYTES,
+            COPROCESSOR_PAYLOAD_BYTES as u32,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::CONTEXT_ID,
+            self.route.context_id,
+        );
+        put_u32(&mut first.data, qshell_abi::offset::ROUND_ID, self.round_id);
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::SCHEMA_ID,
+            qshell_abi::schema::MICROBLOSSOM_DECODE_REQUEST,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::SOURCE_ENDPOINT_ID,
+            self.route.source_endpoint_id,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::DESTINATION_ENDPOINT_ID,
+            self.route.expected_decoder_endpoint_id.unwrap_or(0),
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::ROUTE_CAPABILITY_ID,
+            self.route.route_capability_id,
+        );
+        put_u32(&mut first.data, qshell_abi::offset::ROUTE_VERSION, 0);
+        put_u32(&mut first.data, qshell_abi::offset::RECORD_SEQUENCE, 0);
+        first.data[qshell_abi::HEADER_BYTES..].copy_from_slice(&payload[..16]);
+        let mut second = AxisBeat {
+            data: [0; qshell_abi::BEAT_BYTES],
+            keep: (1_u64 << 32) - 1,
+            last: true,
+        };
+        second.data[..32].copy_from_slice(&payload[16..]);
+        self.link.send_beat(first).map_err(QshellLinkError::Link)?;
+        self.link.send_beat(second).map_err(QshellLinkError::Link)?;
+
+        let first = self.link.receive_beat().map_err(QshellLinkError::Link)?;
+        let second = self.link.receive_beat().map_err(QshellLinkError::Link)?;
+        if first.last
+            || !second.last
+            || first.keep != u64::MAX
+            || second.keep != (1_u64 << 32) - 1
+            || get_u32(&first.data, qshell_abi::offset::MAGIC) != qshell_abi::MAGIC
+            || first.data[qshell_abi::offset::ABI_VERSION] != qshell_abi::VERSION as u8
+            || first.data[qshell_abi::offset::RECORD_CLASS] != qshell_abi::record_class::CORRECTION
+            || get_u32(&first.data, qshell_abi::offset::SCHEMA_ID)
+                != qshell_abi::schema::MICROBLOSSOM_DECODE_RESULT
+            || get_u32(&first.data, qshell_abi::offset::CONTEXT_ID) != self.route.context_id
+            || get_u32(&first.data, qshell_abi::offset::ROUND_ID) != self.round_id
+            || get_u32(&first.data, qshell_abi::offset::SOURCE_ENDPOINT_ID)
+                != self.route.expected_decoder_endpoint_id.unwrap_or(0)
+            || get_u32(&first.data, qshell_abi::offset::DESTINATION_ENDPOINT_ID)
+                != self.route.source_endpoint_id
+            || get_u32(&first.data, qshell_abi::offset::ROUTE_CAPABILITY_ID)
+                != self.route.route_capability_id
+        {
+            return Err(QshellLinkError::MetadataMismatch);
+        }
+        let mut result_payload = [0_u8; COPROCESSOR_PAYLOAD_BYTES];
+        result_payload[..16].copy_from_slice(&first.data[qshell_abi::HEADER_BYTES..]);
+        result_payload[16..].copy_from_slice(&second.data[..32]);
+        if result_payload[..4] != DECODE_RESULT_MAGIC || get_u16(&result_payload, 4) != 1 {
+            return Err(QshellLinkError::MalformedEnvelope);
+        }
+        let edge_count = get_u16(&result_payload, 40) as usize;
+        if edge_count > MAX_CORRECTION_EDGES {
+            return Err(QshellLinkError::MalformedEnvelope);
+        }
+        let mut graph_id = [0_u8; 32];
+        graph_id.copy_from_slice(&result_payload[8..40]);
+        let correction_edges = (0..edge_count)
+            .map(|i| get_u16(&result_payload, 44 + 2 * i))
+            .collect();
+        self.round_id = self.round_id.wrapping_add(1);
+        Ok(DecodeResult {
+            graph_id,
+            status: get_u16(&result_payload, 6),
+            accelerator_operations: get_u16(&result_payload, 42),
+            correction_edges,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1570,6 +1751,89 @@ mod tests {
                 detail: 9,
             })
         ));
+    }
+
+    #[test]
+    fn coprocessor_decode_codec_round_trips_canonical_d3() {
+        let mut first = AxisBeat {
+            data: [0; qshell_abi::BEAT_BYTES],
+            keep: u64::MAX,
+            last: false,
+        };
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::MAGIC,
+            qshell_abi::MAGIC,
+        );
+        first.data[qshell_abi::offset::ABI_VERSION] = qshell_abi::VERSION as u8;
+        first.data[qshell_abi::offset::RECORD_CLASS] = qshell_abi::record_class::CORRECTION;
+        put_u16(
+            &mut first.data,
+            qshell_abi::offset::FLAGS,
+            qshell_abi::flag::END_OF_ROUND,
+        );
+        put_u16(
+            &mut first.data,
+            qshell_abi::offset::HEADER_BYTES,
+            qshell_abi::HEADER_BYTES as u16,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::PAYLOAD_BYTES,
+            COPROCESSOR_PAYLOAD_BYTES as u32,
+        );
+        put_u32(&mut first.data, qshell_abi::offset::CONTEXT_ID, 7);
+        put_u32(&mut first.data, qshell_abi::offset::ROUND_ID, 42);
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::SCHEMA_ID,
+            qshell_abi::schema::MICROBLOSSOM_DECODE_RESULT,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::SOURCE_ENDPOINT_ID,
+            0x101,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::DESTINATION_ENDPOINT_ID,
+            0x12,
+        );
+        put_u32(
+            &mut first.data,
+            qshell_abi::offset::ROUTE_CAPABILITY_ID,
+            0x8765_4321,
+        );
+        let mut payload = [0_u8; COPROCESSOR_PAYLOAD_BYTES];
+        payload[..4].copy_from_slice(&DECODE_RESULT_MAGIC);
+        put_u16(&mut payload, 4, 1);
+        payload[8..40].copy_from_slice(&GRAPH_ID);
+        put_u16(&mut payload, 40, 1);
+        put_u16(&mut payload, 42, 10);
+        put_u16(&mut payload, 44, 2);
+        first.data[qshell_abi::HEADER_BYTES..].copy_from_slice(&payload[..16]);
+        let mut second = AxisBeat {
+            data: [0; qshell_abi::BEAT_BYTES],
+            keep: low_keep(32),
+            last: true,
+        };
+        second.data[..32].copy_from_slice(&payload[16..]);
+        let mut beats = MockBeatLink::default();
+        beats.responses.extend([first, second]);
+        let mut link = CoprocessorQshellLink::new(beats, route());
+        let result = link
+            .decode(&DecodeRequest {
+                graph_id: GRAPH_ID,
+                defects: vec![0],
+            })
+            .unwrap();
+        assert_eq!(result.correction_edges, vec![2]);
+        assert_eq!(result.accelerator_operations, 10);
+        assert_eq!(link.link.sent.len(), 2);
+        assert_eq!(
+            get_u32(&link.link.sent[0].data, qshell_abi::offset::SCHEMA_ID),
+            qshell_abi::schema::MICROBLOSSOM_DECODE_REQUEST
+        );
     }
 
     #[test]

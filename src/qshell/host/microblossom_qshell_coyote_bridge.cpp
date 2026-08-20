@@ -61,9 +61,14 @@ std::size_t valid_bytes(std::uint64_t keep) {
 
 class bridge {
 public:
-  bridge(std::int32_t vfpga_id, std::chrono::milliseconds timeout)
-      : thread_(vfpga_id, getpid()), timeout_(timeout), tx_open_(false),
+  bridge(std::int32_t vfpga_id, std::chrono::milliseconds timeout,
+         std::size_t expected_continuation)
+      : thread_(vfpga_id, getpid()), timeout_(timeout),
+        expected_continuation_(expected_continuation), tx_open_(false),
         cached_rx_valid_(false), cached_rx_bytes_(0) {
+    if (expected_continuation_ == 0 || expected_continuation_ > beat_bytes) {
+      throw std::runtime_error("response continuation must contain 1..64 bytes");
+    }
     memory_ = reinterpret_cast<std::uint8_t *>(
         thread_.getMem({coyote::CoyoteAllocType::HPF, 2 * beat_bytes}));
     if (memory_ == nullptr) {
@@ -110,7 +115,9 @@ public:
     std::memset(memory_, 0, 2 * beat_bytes);
     coyote::localSg first = {.addr = memory_, .len = beat_bytes, .stream = 1};
     coyote::localSg second = {
-        .addr = memory_ + beat_bytes, .len = header_bytes, .stream = 1};
+        .addr = memory_ + beat_bytes,
+        .len = static_cast<std::uint32_t>(expected_continuation_),
+        .stream = 1};
     thread_.clearCompleted();
     // Coyote names transfers from the vFPGA into host memory LOCAL_WRITE.
     thread_.invoke(coyote::CoyoteOper::LOCAL_WRITE, first, false);
@@ -123,8 +130,8 @@ public:
     }
     const auto payload_bytes = load_u32(memory_ + 12);
     const auto continuation = payload_bytes - (beat_bytes - header_bytes);
-    if (continuation != header_bytes) {
-      throw std::runtime_error("expected a 48-byte MBQ1 response continuation");
+    if (continuation != expected_continuation_) {
+      throw std::runtime_error("QShell response continuation length mismatch");
     }
     cached_rx_bytes_ = continuation;
     cached_rx_valid_ = true;
@@ -140,6 +147,7 @@ private:
   coyote::cThread thread_;
   std::chrono::milliseconds timeout_;
   std::uint8_t *memory_;
+  std::size_t expected_continuation_;
   bool tx_open_;
   bool cached_rx_valid_;
   std::size_t cached_rx_bytes_;
@@ -190,21 +198,25 @@ int main(int argc, char **argv) {
 
   std::int32_t vfpga_id = 0;
   std::chrono::milliseconds timeout{1000};
+  std::size_t continuation_bytes = header_bytes;
   for (int index = 1; index < argc; ++index) {
     const std::string argument(argv[index]);
     if (argument == "--vfpga" && index + 1 < argc) {
       vfpga_id = std::stoi(argv[++index]);
     } else if (argument == "--timeout-ms" && index + 1 < argc) {
       timeout = std::chrono::milliseconds(std::stoul(argv[++index]));
+    } else if (argument == "--continuation-bytes" && index + 1 < argc) {
+      continuation_bytes = std::stoul(argv[++index]);
     } else {
       std::cerr << "usage: " << argv[0]
-                << " [--vfpga ID] [--timeout-ms MS] [--self-test]\n";
+                << " [--vfpga ID] [--timeout-ms MS]"
+                   " [--continuation-bytes BYTES] [--self-test]\n";
       return 2;
     }
   }
 
   try {
-    bridge link(vfpga_id, timeout);
+    bridge link(vfpga_id, timeout, continuation_bytes);
     while (true) {
       const auto request = std::cin.get();
       if (request == std::char_traits<char>::eof()) {

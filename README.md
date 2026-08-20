@@ -79,7 +79,9 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `qshell-u280-shell-synth`: the exact pinned QShell U280 shell synthesis gate, without placement or routing;
 - `qshell-u280-shell`: the exact pinned full QShell U280 shell required before loading the application partial;
 - `microblossom-d3-qshell-{u280,v80}-app-synth`: application synthesis stages against the corresponding routed QShell shells;
-- `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed application/partial-image packages;
+- `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed host-driven application/partial-image packages;
+- `microblossom-d3-qshell-v80-coprocessor-app`: provider-aware V80 application that forwards coarse QShell decode records over logical co-processor stream port 0 and exposes the generated accelerator through its bounded MMIO aperture;
+- `microblossom-d3-r5-service-firmware`: TCM-bounded R5 service ELF with the canonical d3 primal service, selected-application MMIO access, and an immutable runtime identity;
 - `microblossom-d3-qshell-{u280,v80}-sim`: packaged Coyote/QShell behavioral simulation runtimes;
 - `microblossom-d3-qshell-{u280,v80}-xdb-run`: canonical host workload runners for active xdb sessions;
 - `microblossom-d3-sim-runner`: native half of the packaged Rust/Scala/Verilator accelerator smoke;

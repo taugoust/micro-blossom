@@ -13,14 +13,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     qshell = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=master";
+      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=coprocessor-hybrid-services";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     coyote.follows = "qshell/coyote";
-    coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/57ccabd8f6aac883ab916ead842561fcde2d5262";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    coyote-nix.follows = "qshell/coyote-nix";
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
   };
 
@@ -88,6 +85,7 @@
           qshellContractSource = qshellLib.qshellContractSource;
           qshellHostPackage = qshell.packages.${system}.qshell-host;
           qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
+          qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-coprocessor-shell;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
           xilinxShareRoot = doctor.xilinxShareRoot;
@@ -95,6 +93,9 @@
             inherit pkgs xilinxShareRoot;
             coyoteRoot = coyote;
             platforms = systems;
+            extraRuntimeInputs = lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
+              doctor.xilinxShell
+            ];
           };
           coyoteDriverPackages = coyoteNix.lib.mkCoyoteDriverPackages {
             inherit pkgs;
@@ -240,15 +241,17 @@
             protocolCommonArgs
             // {
               cargoArtifacts = protocolCargoArtifacts;
-              buildPhaseCargoCommand = "cargo test --profile release --locked --no-run";
+              buildPhaseCargoCommand = "cargo build --profile release --locked --bin microblossom_d3_coprocessor && cargo test --profile release --locked --no-run";
               doCheck = true;
               checkPhaseCargoCommand = "cargo test --profile release --locked";
               doInstallCargoArtifacts = false;
               installPhaseCommand = ''
                 contract="$out/share/microblossom/qshell-protocol"
-                mkdir -p "$contract/src"
+                mkdir -p "$out/bin" "$contract/src/bin"
+                install -m755 target/release/microblossom_d3_coprocessor "$out/bin/"
                 cp Cargo.toml Cargo.lock "$contract/"
                 cp src/lib.rs src/qshell_abi_generated.rs "$contract/src/"
+                cp src/bin/microblossom_d3_coprocessor.rs "$contract/src/bin/"
                 cp ${./src/qshell/README.md} "$contract/README.md"
               '';
 
@@ -699,6 +702,162 @@
             v80 = mkD3QshellApp "v80";
           };
 
+          r5PlatformContract = {
+            api = "coyote.v80-r5-platform/v1";
+            xilinxVersion = doctor.boards.v80.xilinxVersion;
+            processor = "psv_cortexr5_0";
+            core = "r5-0";
+            hardwareContractSha256 = builtins.hashFile "sha256" (
+              coyote + "/scripts/v80-r5-platform-export.cmake.in"
+            );
+            entry = "0x00000000";
+            atcm = {
+              base = "0x00000000";
+              bytes = "0x00010000";
+            };
+            btcm = {
+              base = "0x00020000";
+              bytes = "0x00010000";
+            };
+            scratch = {
+              base = "0x80000000";
+              bytes = "0x00001000";
+            };
+            bootState = {
+              coldResetRequired = true;
+              armExceptions = true;
+              littleEndian = true;
+              cachesDisabled = true;
+              delayedHandoff = true;
+              warmRehandoffSupported = false;
+              tcmEcc = "platform-managed-unverified";
+            };
+            vectorsBytes = 32;
+            statusAddress = "0x00020000";
+            statusBytes = 64;
+            requiredSymbols = [
+              "_start"
+              "r5_main"
+              "r5_exception_trap"
+              "r5_internal_trap"
+            ];
+            absoluteSymbols = {
+              __stack_floor = "0x0002f000";
+              __svc_stack_top = "0x0002f800";
+              __abt_stack_top = "0x0002fa00";
+              __und_stack_top = "0x0002fc00";
+              __irq_stack_top = "0x0002fe00";
+              __fiq_stack_top = "0x00030000";
+            };
+          };
+          r5ServiceIdentityFiles = [
+            ./src/cpu/r5-service/Makefile
+            ./src/cpu/r5-service/linker.ld
+            ./src/cpu/r5-service/service.c
+            ./src/cpu/r5-service/startup.S
+            "${coyote}/sw/firmware/coprocessor/provider.c"
+            "${coyote}/sw/firmware/coprocessor/provider.h"
+            "${coyote}/sw/firmware/coprocessor/provider_internal.h"
+            "${coyote}/sw/firmware/coprocessor/provider_platform.h"
+            "${coyote}/sw/firmware/coprocessor/provider_protocol.h"
+            "${coyote}/sw/firmware/coprocessor/provider_transport_r5.c"
+          ];
+          r5ServiceRuntimeIdentity = builtins.hashString "sha256" (
+            lib.concatStringsSep "\n" (
+              [
+                "microblossom-d3-r5-service-runtime-v1"
+                "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5"
+                (builtins.toJSON r5PlatformContract)
+              ]
+              ++ map (path: builtins.hashFile "sha256" path) r5ServiceIdentityFiles
+            )
+          );
+          r5ServiceIdentityFlags = lib.concatStringsSep " " (
+            lib.genList (
+              index:
+              "-DCYT_PROVIDER_IDENTITY_WORD_${toString index}=0x${
+                builtins.substring (index * 8) 8 r5ServiceRuntimeIdentity
+              }"
+            ) 8
+          );
+          r5ServiceSource = pkgs.runCommand "microblossom-d3-r5-service-source" { } ''
+            mkdir -p "$out/coyote/sw/firmware"
+            cp -r ${./src/cpu/r5-service}/. "$out/"
+            cp -r ${coyote}/sw/firmware/coprocessor "$out/coyote/sw/firmware/"
+          '';
+          r5ServiceFirmware = coyoteNix.lib.mkCoyoteR5FirmwarePackage {
+            inherit pkgs;
+            tools = coyoteTools;
+            pname = "microblossom-d3-r5-service-firmware";
+            src = r5ServiceSource;
+            platformContract = r5PlatformContract;
+            firmwareAbi = "microblossom-d3-coprocessor-v1";
+            runtimeIdentity = r5ServiceRuntimeIdentity;
+            extraMakeFlags = [
+              "COYOTE_ROOT=./coyote"
+              "EXTRA_CFLAGS=${r5ServiceIdentityFlags}"
+            ];
+          };
+
+          d3QshellCoprocessorAppHwSource =
+            pkgs.runCommand "microblossom-d3-qshell-coprocessor-app-hw-source" { }
+              ''
+                cp -R ${d3QshellAppHwSource}/. "$out"
+                chmod -R u+w "$out"
+                mkdir -p "$out/src/microblossom-coprocessor"
+                cp ${./src/qshell/app/src/microblossom-coprocessor/vfpga_top.svh} \
+                  "$out/src/microblossom-coprocessor/vfpga_top.svh"
+                cp ${./src/qshell/rtl/microblossom_coprocessor_mmio.sv} \
+                  "$out/src/microblossom/hdl/microblossom_coprocessor_mmio.sv"
+                cp ${./src/qshell/rtl/microblossom_coprocessor_application.sv} \
+                  "$out/src/microblossom/hdl/microblossom_coprocessor_application.sv"
+                substituteInPlace "$out/CMakeLists.txt" \
+                  --replace-fail \
+                    'load_apps(VFPGA_C0_0 "src/microblossom")' \
+                    'load_apps(VFPGA_C0_0 "src/microblossom-coprocessor src/microblossom")'
+                ${pkgs.jq}/bin/jq \
+                  '. + {
+                    coprocessor: {
+                      logicalPort: 0,
+                      streamAbi: 1,
+                      mmioAbi: 1,
+                      applicationMmioAbi: "microblossom-d3-accelerator-v1",
+                      integrationState: "connected"
+                    }
+                  }' \
+                  "$out/core-manifest.json" > "$out/core-manifest.json.tmp"
+                mv "$out/core-manifest.json.tmp" "$out/core-manifest.json"
+              '';
+
+          d3QshellCoprocessorApp = coyoteNix.lib.mkCoyoteAppPackage {
+            inherit pkgs xilinxShareRoot;
+            tools = coyoteTools;
+            coyoteRoot = coyote;
+            xilinxShell = doctor.xilinxShell;
+            hwSource = d3QshellCoprocessorAppHwSource;
+            pname = "microblossom-d3-qshell-v80-coprocessor-app";
+            board = "v80";
+            shellPackage = qshellV80CoprocessorShell;
+            cmakeFlags = [
+              "-DCYT_DIR:PATH=${coyote}"
+              "-DSCLK_F:STRING=333"
+              "-DN_COPROCESSOR_PORTS:STRING=1"
+              "-DEN_V80_R5_PLATFORM:STRING=0"
+              "-DPCIE_GEN:STRING=5"
+            ];
+            provenance = {
+              application = "microblossom-d3-coprocessor-integration";
+              graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
+              qshellRecordAbi = 2;
+              mbqProtocol = 1;
+              coprocessorLogicalPort = 0;
+              coprocessorStreamAbi = 1;
+              coprocessorMmioAbi = 1;
+              provider = "v80-r5-0";
+              integrationState = "logical-port-connected";
+            };
+          };
+
           microblossomQshellCoyoteBridge = pkgs.stdenv.mkDerivation {
             pname = "microblossom-qshell-coyote-bridge";
             version = "0.1.0";
@@ -864,6 +1023,7 @@
           microblossom-d3-rtl = d3Rtl;
           microblossom-d3-qshell-core = d3QshellCore;
           microblossom-d3-qshell-app-hw-source = d3QshellAppHwSource;
+          microblossom-d3-qshell-coprocessor-app-hw-source = d3QshellCoprocessorAppHwSource;
           microblossom-d3-qshell-simulation-hw-source = d3QshellSimulationHwSource;
           microblossom-d3-qshell-u280-sim = d3QshellSimulationPackages."microblossom-d3-qshell-u280-sim";
           microblossom-d3-qshell-v80-sim = d3QshellSimulationPackages."microblossom-d3-qshell-v80-sim";
@@ -871,8 +1031,13 @@
           qshell-u280-shell-synth = qshellU280Shell.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-u280-app = d3QshellApps.u280;
           microblossom-d3-qshell-v80-app = d3QshellApps.v80;
+          microblossom-d3-qshell-v80-coprocessor-app = d3QshellCoprocessorApp;
+          microblossom-d3-r5-service-source = r5ServiceSource;
+          microblossom-d3-r5-service-firmware = r5ServiceFirmware;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
+          microblossom-d3-qshell-v80-coprocessor-app-synth =
+            d3QshellCoprocessorApp.coyoteTwoStage.stages.synth;
           update-qshell-rust-abi = updateQshellRustAbi;
           verilator-5_014 = verilator_5_014;
         }
@@ -903,6 +1068,9 @@
           rtl = self.packages.${system}.microblossom-d3-rtl;
           qshellCore = self.packages.${system}.microblossom-d3-qshell-core;
           qshellAppHwSource = self.packages.${system}.microblossom-d3-qshell-app-hw-source;
+          qshellCoprocessorAppHwSource =
+            self.packages.${system}.microblossom-d3-qshell-coprocessor-app-hw-source;
+          qshellCoprocessorApp = self.packages.${system}.microblossom-d3-qshell-v80-coprocessor-app;
           qshellSimulationHwSource = self.packages.${system}.microblossom-d3-qshell-simulation-hw-source;
           qshellXdbBridge = self.packages.${system}.microblossom-qshell-u280-xdb-bridge;
           qshellU280Simulation = self.packages.${system}.microblossom-d3-qshell-u280-sim;
@@ -1036,6 +1204,50 @@
                   --fixtures ${qshellContractSource}/abi/golden-fixtures.json
                 touch "$out"
               '';
+          qshell-coprocessor-mmio =
+            pkgs.runCommand "microblossom-qshell-coprocessor-mmio-check"
+              { nativeBuildInputs = [ pkgs.iverilog ]; }
+              ''
+                iverilog -g2012 -DSYNTHESIS -s tb_coprocessor_mmio -o simulation \
+                  ${./src/qshell/rtl/microblossom_coprocessor_mmio.sv} \
+                  ${./src/qshell/tests/microblossom_coprocessor_mmio_tb.sv}
+                vvp simulation | tee simulation.log
+                grep -F MICROBLOSSOM_COPROCESSOR_MMIO_PASS simulation.log >/dev/null
+                touch "$out"
+              '';
+
+          qshell-coprocessor-application =
+            pkgs.runCommand "microblossom-qshell-coprocessor-application-check"
+              { nativeBuildInputs = [ verilator_5_014 ]; }
+              ''
+                core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
+                verilator --lint-only --timing --assert -Wno-fatal \
+                  -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                  --top-module microblossom_coprocessor_application \
+                  "$core/MicroBlossomBus.v" \
+                  "$core/microblossom_qshell_clock_div2.sv" \
+                  ${./src/qshell/rtl/microblossom_coprocessor_mmio.sv} \
+                  ${./src/qshell/rtl/microblossom_coprocessor_application.sv}
+                touch "$out"
+              '';
+
+          r5-service-model =
+            pkgs.runCommand "microblossom-r5-service-model-check" { nativeBuildInputs = [ pkgs.stdenv.cc ]; }
+              ''
+                identity_flags=""
+                for index in $(seq 0 7); do
+                  identity_flags="$identity_flags -DCYT_PROVIDER_IDENTITY_WORD_$index=0"
+                done
+                cc -std=c11 -Wall -Wextra -Werror $identity_flags \
+                  -I${coyote}/sw/firmware/coprocessor \
+                  ${./src/cpu/r5-service/service.c} \
+                  ${./src/cpu/r5-service/service_test.c} -o service-test
+                ./service-test | tee service-test.log
+                grep -F MICROBLOSSOM_R5_SERVICE_PASS service-test.log >/dev/null
+                touch "$out"
+              '';
+
+          r5-service-firmware = self.packages.${system}.microblossom-d3-r5-service-firmware;
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
           d3-qshell-golden-decode = self.packages.${system}.microblossom-d3-qshell-golden-decode;
 
@@ -1074,7 +1286,7 @@
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
                 test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  044f46242a20a102573b01b0cae0588ef24ad0d1
+                  562ab968c19529443ecf8015c598418d3c5404a1
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
@@ -1126,9 +1338,36 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  044f46242a20a102573b01b0cae0588ef24ad0d1
+                  562ab968c19529443ecf8015c598418d3c5404a1
                 touch "$out"
               '';
+
+          qshell-coprocessor-package =
+            assert coyoteNix.rev == "20cba063cb31a92fabc31b81391bd9504a97d733";
+            assert qshellCoprocessorApp.coyoteTwoStage.kind == "app";
+            assert qshellCoprocessorApp.coyoteTwoStage.board == "v80";
+            assert
+              qshellCoprocessorApp.coyoteTwoStage.shellPackage
+              == qshell.packages.${system}.qshell-v80-coprocessor-shell;
+            pkgs.runCommand "microblossom-qshell-coprocessor-package" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
+                562ab968c19529443ecf8015c598418d3c5404a1
+              test "$(jq -er '.coprocessor.logicalPort' \
+                ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 0
+              test "$(jq -er '.coprocessor.streamAbi' \
+                ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 1
+              test "$(jq -er '.coprocessor.mmioAbi' \
+                ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 1
+              test "$(jq -er '.coprocessor.integrationState' \
+                ${qshellCoprocessorAppHwSource}/core-manifest.json)" = connected
+              grep -F 'microblossom_coprocessor_application' \
+                ${qshellCoprocessorAppHwSource}/src/microblossom-coprocessor/vfpga_top.svh >/dev/null
+              grep -F 'axis_coprocessor_recv[0]' \
+                ${qshellCoprocessorAppHwSource}/src/microblossom-coprocessor/vfpga_top.svh >/dev/null
+              test -s ${qshellCoprocessorAppHwSource}/src/microblossom/hdl/microblossom_coprocessor_mmio.sv
+              test -s ${qshellCoprocessorAppHwSource}/src/microblossom/hdl/microblossom_coprocessor_application.sv
+              touch "$out"
+            '';
 
           qshell-application =
             pkgs.runCommand "microblossom-qshell-application"
@@ -1173,7 +1412,7 @@
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
                 test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
-                  044f46242a20a102573b01b0cae0588ef24ad0d1
+                  562ab968c19529443ecf8015c598418d3c5404a1
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
