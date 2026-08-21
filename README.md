@@ -80,9 +80,10 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `qshell-u280-shell`: the exact pinned full QShell U280 shell required before loading the application partial;
 - `microblossom-d3-qshell-{u280,v80}-app-synth`: application synthesis stages against the corresponding routed QShell shells;
 - `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed host-driven application/partial-image packages;
-- `microblossom-d3-qshell-v80-coprocessor-app`: provider-aware V80 application that forwards coarse QShell decode records over logical co-processor stream port 0 and exposes the generated accelerator through its bounded MMIO aperture;
-- `microblossom-d3-r5-service-firmware`: TCM-bounded R5 service ELF with the canonical d3 primal service, selected-application MMIO access, and an immutable runtime identity;
-- `microblossom-d3-v80-coprocessor-compatibility-bundle`: post-route bundle that binds the actual application ID and shell compatibility ID to the firmware runtime identity, decoder contract, host tools, and exact dependency revisions; building it intentionally realizes the provider shell and routed application and is left to the user;
+- `microblossom-d3-v80-r5-app`: user-facing V80 service package containing the separately routed MicroBlossom vFPGA partial PDI, R5 service ELF, host runner/control tools, and exact QShell compatibility metadata; build `qshell#qshell-v80-r5-shell` once, then build this app without reimplementing QShell;
+- `microblossom-d3-v80-r5-app-{synth,routed}`: explicit application-only implementation stages for durable Nix GC roots;
+- `microblossom-d3-v80-r5-firmware`: TCM-bounded R5 service ELF with the canonical d3 primal service, selected-application MMIO access, and an immutable runtime identity;
+- `microblossom-d3-qshell-v80-coprocessor-app` and `microblossom-d3-v80-coprocessor-compatibility-bundle`: retained low-level implementation and compatibility packages consumed by the user-facing app output;
 - `microblossom-d3-qshell-{u280,v80}-sim`: packaged Coyote/QShell behavioral simulation runtimes;
 - `microblossom-d3-qshell-{u280,v80}-xdb-run`: canonical host workload runners for active xdb sessions;
 - `microblossom-d3-sim-runner`: native half of the packaged Rust/Scala/Verilator accelerator smoke;

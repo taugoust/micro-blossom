@@ -44,7 +44,7 @@ Every record carries the exact graph SHA-256 so a shell/application can reject o
 
 ## Current QShell envelope
 
-`rtl/microblossom_qshell_envelope.sv` consumes QShell's generated SystemVerilog constants from pinned `coprocessor-hybrid-services` revision `691b4464c4587e0b8c2af216f7df7529cedebd22`; MicroBlossom does not redefine ABI offsets, classes, flags, or schema IDs. Each command uses one full header beat containing the first 16 MBQ1 bytes and one final 48-byte continuation. The adapter validates the syndrome class, command schema, exact 64-byte payload, contiguous keep masks, and `EndJob`/`END_OF_ROUND` relationship before presenting one complete internal MBQ1 record.
+`rtl/microblossom_qshell_envelope.sv` consumes QShell's generated SystemVerilog constants from pinned `coprocessor-hybrid-services` revision `0099e9fe49dfff7478407a054d997e520c13f9f0`; MicroBlossom does not redefine ABI offsets, classes, flags, or schema IDs. Each command uses one full header beat containing the first 16 MBQ1 bytes and one final 48-byte continuation. The adapter validates the syndrome class, command schema, exact 64-byte payload, contiguous keep masks, and `EndJob`/`END_OF_ROUND` relationship before presenting one complete internal MBQ1 record.
 
 A response reverses the request endpoints, preserves context/round/capability/route identity, uses the MicroBlossom response schema and correction class, and emits the 64-byte MBQ1 response in the same two-beat shape. Correction sequence numbers are independent of command sequence numbers and reset after terminal `Completion` or `Error` records. The adapter serializes commands until the internal frontend either returns a response or becomes ready again after a response-free operation, keeping request metadata unambiguous under backpressure.
 
@@ -72,7 +72,15 @@ The CPU-assisted V80 application uses one 96-byte, two-beat QShell record per de
 
 The packaged `microblossom_d3_coprocessor` host executable emits the canonical request through the existing Coyote process bridge and verifies correction edge `[2]`. It configures the bridge for the coarse record's 32-byte continuation; the host-driven MBQ1 path retains its 48-byte continuation.
 
-After the user completes the provider shell and application route, `microblossom-d3-v80-coprocessor-compatibility-bundle` reads their actual shell compatibility and application artifact IDs, combines them with the firmware's embedded runtime identity, validates the resulting strict QShell decoder contract, and links the immutable shell, application, firmware, host protocol, and Coyote bridge packages. Its manifest explicitly leaves physical acceptance and image composition false. The host-driven U280/V80 packages remain available under their existing names; no fine-grained MMIO operation crosses PCIe in the CPU-assisted package.
+The deployment-facing build is intentionally two-stage. Build and retain `qshell-v80-r5-shell` once in the QShell repository, then build only this decoder service in MicroBlossom:
+
+```sh
+nix build -L .#microblossom-d3-v80-r5-app -o result-v80-r5-app
+```
+
+The app output contains `bitstreams/microblossom-d3-v80-r5.pdi`, `firmware/r5.elf`, the host runner, the Coyote bridge, the QShell control CLI, and exact decoder/application/shell metadata. Its underlying Coyote `BUILD_APP` flow reads the locked QShell checkpoint and routes only the MicroBlossom vFPGA; it does not synthesize or route QShell. Explicit `*-app-synth` and `*-app-routed` outputs allow those expensive application stages to retain separate Nix GC roots.
+
+The older `microblossom-d3-v80-coprocessor-compatibility-bundle` remains an internal compatibility/provenance package consumed by the app output. It is not the user-facing deployment target. The host-driven U280/V80 packages remain available under their existing names; no fine-grained MMIO operation crosses PCIe in the CPU-assisted package.
 
 The post-deployment control sequence is explicit. First read the live provider generation and image identity, then bind logical port 0 with that exact generation. Configure the QShell service/route from the bundle's `decoder-contract.json`, using request/result schemas `131075`/`131076`, before launching the workload:
 
@@ -81,8 +89,8 @@ nix run ../qshell#qshell -- coprocessor-control --operation provider
 nix run ../qshell#qshell -- coprocessor-control --operation bind \
   --endpoint 1 --endpoint-generation <live-generation>
 
-./result/packages/host-protocol/bin/microblossom_d3_coprocessor \
-  --bridge ./result/packages/coyote-bridge/bin/microblossom-qshell-coyote-bridge \
+./result-v80-r5-app/bin/microblossom_d3_coprocessor \
+  --bridge ./result-v80-r5-app/bin/microblossom-qshell-coyote-bridge \
   --context <context> --round <round> --source-endpoint <source> \
   --decoder-endpoint <decoder> --capability <capability>
 ```
