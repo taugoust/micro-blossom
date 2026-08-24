@@ -3,17 +3,17 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1787234907,
-        "narHash": "sha256-Y6CW3KrPT1FIh4tsq8xzkT/AcThDw2sD7aquKhDt1Vo=",
+        "lastModified": 1787578084,
+        "narHash": "sha256-jEyQiLTuUwtKH//4+wFRJnUjAkkSAYBqzHnBXEL/8Jg=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "6af6ae5fd132a0dfb39d70f41530c41259b224c0",
+        "rev": "c30aed6aac90c90daf0c5aa335d0cc38d128702f",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "6af6ae5fd132a0dfb39d70f41530c41259b224c0",
+        "rev": "c30aed6aac90c90daf0c5aa335d0cc38d128702f",
         "type": "github"
       }
     },
@@ -33,17 +33,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1787224499,
-        "narHash": "sha256-r4biTvStw548BdVQ21iUpUyH/PwYcjzjui/rNb4XbVE=",
+        "lastModified": 1787576346,
+        "narHash": "sha256-LVTcddeaIlPkKe8prPhYFy+i9FzHZ/UY95wmSNgpQwY=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "20cba063cb31a92fabc31b81391bd9504a97d733",
+        "rev": "23612d574174ef4db7de6b7b67ac46b83b8aa8c5",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "20cba063cb31a92fabc31b81391bd9504a97d733",
+        "rev": "23612d574174ef4db7de6b7b67ac46b83b8aa8c5",
         "type": "github"
       }
     },
@@ -711,11 +711,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1776659114,
-        "narHash": "sha256-qapCOQmR++yZSY43dzrp3wCrkOTLpod+ONtJWBk6iKU=",
+        "lastModified": 1786936886,
+        "narHash": "sha256-8SFyOdmcG6Nsh/JzlH812lTI/v+ur06fpQhj/acNn8k=",
         "owner": "pyproject-nix",
         "repo": "build-system-pkgs",
-        "rev": "ffaa2161dd5d63e0e94591f86b54fc239660fb2e",
+        "rev": "90ffdeee1a4929b231913df067448cd9803d3e07",
         "type": "github"
       },
       "original": {
@@ -733,11 +733,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1776715674,
-        "narHash": "sha256-Gs1VnEkCkkRZxJQAC/Dhz0Jbfi22mFXChbtNg9w/Ybg=",
+        "lastModified": 1786031528,
+        "narHash": "sha256-cROiHKO3UbIKqF5FG5NikvydzlfIj4EcR1Cty9qOVt4=",
         "owner": "pyproject-nix",
         "repo": "pyproject.nix",
-        "rev": "69f57f27e52a87c54e28138a75ec741cd46663c9",
+        "rev": "1b1485546d85f6f6c7aadb10c4923dbc09633263",
         "type": "github"
       },
       "original": {
@@ -759,11 +759,11 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1787314582,
-        "narHash": "sha256-r4SjujJIHyMLRZ9kb8td0NwSxpjff4gHbZOahcTslN8=",
+        "lastModified": 1787579319,
+        "narHash": "sha256-XruoHDG19TOlHheBNPibv1uL5+OZEHeqQW40NIYMSQc=",
         "ref": "coprocessor-hybrid-services",
-        "rev": "0099e9fe49dfff7478407a054d997e520c13f9f0",
-        "revCount": 70,
+        "rev": "5faaf403931b5791fc9c3f51e9c26dac5475e8de",
+        "revCount": 79,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
@@ -815,7 +815,7 @@
         "fenix": "fenix",
         "nixpkgs": "nixpkgs",
         "qshell": "qshell",
-        "treefmt-nix": "treefmt-nix_3"
+        "treefmt-nix": "treefmt-nix_4"
       }
     },
     "rust-analyzer-src": {
@@ -1010,6 +1010,28 @@
     "treefmt-nix_3": {
       "inputs": {
         "nixpkgs": [
+          "qshell",
+          "xdb",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1786901030,
+        "narHash": "sha256-WSFCsDSE5ffgD2MqzkM2CYjeFiKhRF/dJUN8uedb6YE=",
+        "owner": "numtide",
+        "repo": "treefmt-nix",
+        "rev": "27b3b12a8e6375f28ebe122f07d230ca5459bbfa",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "treefmt-nix",
+        "type": "github"
+      }
+    },
+    "treefmt-nix_4": {
+      "inputs": {
+        "nixpkgs": [
           "nixpkgs"
         ]
       },
@@ -1071,11 +1093,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1777463177,
-        "narHash": "sha256-1PcD0+IZPQXyvmXJ1OYH+23sRc9IyOKrUUBYZonVBm8=",
+        "lastModified": 1786615403,
+        "narHash": "sha256-U++y7nM/6xiEcWI7q4fQoPZjPvRaTwkSqzBOVoEBjUE=",
         "owner": "pyproject-nix",
         "repo": "uv2nix",
-        "rev": "6c53dcf4d3f63240f57e0b0c826cb15eda61f249",
+        "rev": "4b59abb2ae1896d2a0e1abfc47fbc9bf985ea730",
         "type": "github"
       },
       "original": {
@@ -1096,20 +1118,21 @@
         ],
         "pyproject-build-systems": "pyproject-build-systems",
         "pyproject-nix": "pyproject-nix",
+        "treefmt-nix": "treefmt-nix_3",
         "uv2nix": "uv2nix"
       },
       "locked": {
-        "lastModified": 1784215725,
-        "narHash": "sha256-WIxPVZVeyi6rEcDiMgjwmovCsKXHIRSpZl/oJ4yuJYs=",
+        "lastModified": 1787566740,
+        "narHash": "sha256-O/NshUgIHwm9CsKuTQRwsb+xr7LkLiH9q4LI+QZToUY=",
         "owner": "taugoust",
         "repo": "xdb",
-        "rev": "2b37bb4c592906a972a21de91b50d08c0c736b2e",
+        "rev": "810f97d45525edfec34272939e947abb46baf640",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
         "repo": "xdb",
-        "rev": "2b37bb4c592906a972a21de91b50d08c0c736b2e",
+        "rev": "810f97d45525edfec34272939e947abb46baf640",
         "type": "github"
       }
     }

@@ -649,10 +649,6 @@
             done
             cat "$vfpga.body" >> "$vfpga"
             rm "$vfpga.body"
-            substituteInPlace "$out/CMakeLists.txt" \
-              --replace-fail \
-                'VFPGA_C0_0 "src/app/service src/abi"' \
-                'VFPGA_C0_0 "src/app/microblossom"'
             cp ${d3QshellAppHwSource}/core-manifest.json "$out/"
           '';
 
@@ -677,6 +673,7 @@
                   "-DEN_PR:STRING=1"
                   "-DEN_SHELL_PBLOCK:STRING=${if board == "u280" then "1" else "0"}"
                   "-DSIM_EXTERNAL_DYNAMIC_SERVICE:STRING=1"
+                  "-DQSHELL_APPLICATION_SOURCE_DIRS:STRING=src/app/microblossom"
                 ];
               }
             ) qshellLib.boards;
@@ -873,9 +870,9 @@
                   --application-metadata ${d3QshellCoprocessorApp}/metadata/app.json \
                   --runtime-identity ${r5ServiceFirmware}/metadata/runtime-identity \
                   --output "$out" \
-                  --qshell-revision 0099e9fe49dfff7478407a054d997e520c13f9f0 \
-                  --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
-                  --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
+                  --qshell-revision 5faaf403931b5791fc9c3f51e9c26dac5475e8de \
+                  --coyote-revision c30aed6aac90c90daf0c5aa335d0cc38d128702f \
+                  --coyote-nix-revision 23612d574174ef4db7de6b7b67ac46b83b8aa8c5 \
                   --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
                 ln -s ${d3QshellCoprocessorApp} "$out/packages/application"
                 ln -s ${qshellV80CoprocessorShell} "$out/packages/shell"
@@ -1354,9 +1351,9 @@
                   --application-metadata app.json \
                   --runtime-identity runtime-identity \
                   --output generated \
-                  --qshell-revision 0099e9fe49dfff7478407a054d997e520c13f9f0 \
-                  --coyote-revision 6af6ae5fd132a0dfb39d70f41530c41259b224c0 \
-                  --coyote-nix-revision 20cba063cb31a92fabc31b81391bd9504a97d733 \
+                  --qshell-revision 5faaf403931b5791fc9c3f51e9c26dac5475e8de \
+                  --coyote-revision c30aed6aac90c90daf0c5aa335d0cc38d128702f \
+                  --coyote-nix-revision 23612d574174ef4db7de6b7b67ac46b83b8aa8c5 \
                   --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
                 test "$(jq -er '.placement.bitstream_id' generated/decoder-contract.json)" = \
                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -1422,7 +1419,7 @@
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
                 test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  0099e9fe49dfff7478407a054d997e520c13f9f0
+                  5faaf403931b5791fc9c3f51e9c26dac5475e8de
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
@@ -1442,7 +1439,7 @@
                 hdl="$app/hdl"
                 test -s ${qshellAppHwSource}/CMakeLists.txt
                 test -s ${qshellSimulationHwSource}/CMakeLists.txt
-                grep -F 'VFPGA_C0_0 "src/app/microblossom"' \
+                grep -F 'QSHELL_APPLICATION_SOURCE_DIRS' \
                   ${qshellSimulationHwSource}/CMakeLists.txt >/dev/null
                 test -s ${qshellSimulationHwSource}/src/shell/hdl/qshell_dynamic_service.sv
                 test -s ${qshellSimulationHwSource}/src/app/microblossom/vfpga_top.svh
@@ -1474,12 +1471,12 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  0099e9fe49dfff7478407a054d997e520c13f9f0
+                  5faaf403931b5791fc9c3f51e9c26dac5475e8de
                 touch "$out"
               '';
 
           qshell-coprocessor-package =
-            assert coyoteNix.rev == "20cba063cb31a92fabc31b81391bd9504a97d733";
+            assert coyoteNix.rev == "23612d574174ef4db7de6b7b67ac46b83b8aa8c5";
             assert qshellCoprocessorApp.coyoteTwoStage.kind == "app";
             assert qshellCoprocessorApp.coyoteTwoStage.board == "v80";
             assert
@@ -1490,7 +1487,7 @@
               == qshell.packages.${system}.qshell-v80-coprocessor-shell;
             pkgs.runCommand "microblossom-qshell-coprocessor-package" { nativeBuildInputs = [ pkgs.jq ]; } ''
               test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                0099e9fe49dfff7478407a054d997e520c13f9f0
+                5faaf403931b5791fc9c3f51e9c26dac5475e8de
               test "$(jq -er '.coprocessor.logicalPort' \
                 ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 0
               test "$(jq -er '.coprocessor.streamAbi' \
@@ -1551,7 +1548,7 @@
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
                 test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
-                  0099e9fe49dfff7478407a054d997e520c13f9f0
+                  5faaf403931b5791fc9c3f51e9c26dac5475e8de
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \

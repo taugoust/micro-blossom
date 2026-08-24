@@ -225,6 +225,7 @@ def main() -> int:
     parser.add_argument("--xdb", required=False)
     parser.add_argument("--vfpga", type=int, default=0)
     parser.add_argument("--timeout-ms", type=int, default=10_000)
+    parser.add_argument("--continuation-bytes", type=int, default=CONTINUATION_BYTES)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -233,6 +234,8 @@ def main() -> int:
         parser.error("--xdb is required outside self-test")
     if args.vfpga != 0:
         parser.error("packaged simulation currently exposes only vFPGA 0")
+    if args.continuation_bytes != CONTINUATION_BYTES:
+        parser.error("MicroBlossom MBQ1 records require 48-byte continuation beats")
     bridge = XdbBeatBridge(args.xdb, args.timeout_ms)
     return run_protocol(bridge)
 

@@ -25,6 +25,8 @@ pub mod schema {
     pub const MICROBLOSSOM_DECODE_REQUEST: u32 = 0x20003;
     pub const MICROBLOSSOM_DECODE_RESULT: u32 = 0x20004;
     pub const PAULI_FRAME_XOR: u32 = 0x30001;
+    pub const QUEKUF_D3_SYNDROME: u32 = 0x50001;
+    pub const QUEKUF_D3_CORRECTION: u32 = 0x50002;
     pub const CONTROL: u32 = 0xffff0001;
     pub const ERROR: u32 = 0xffff0002;
 }
