@@ -798,6 +798,13 @@
 
           coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.json;
 
+          microblossomV80Floorplan =
+            pkgs.runCommand "microblossom-v80-application-floorplan.xdc" { } ''
+              cat ${qshell.outPath}/hw/floorplans/qshell_v80.xdc > "$out"
+              cat ${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc} \
+                >> "$out"
+            '';
+
           d3QshellCoprocessorAppHwSource =
             pkgs.runCommand "microblossom-d3-qshell-coprocessor-app-hw-source" { }
               ''
@@ -814,6 +821,9 @@
                   --replace-fail \
                     'load_apps(VFPGA_C0_0 "src/microblossom")' \
                     'load_apps(VFPGA_C0_0 "src/microblossom-coprocessor src/microblossom")'
+                sed -i \
+                  '/validation_checks_hw()/i set(FPLAN_PATH "${microblossomV80Floorplan}")' \
+                  "$out/CMakeLists.txt"
                 ${pkgs.jq}/bin/jq \
                   '. + {
                     coprocessor: {
@@ -1516,6 +1526,10 @@
                 ${qshellCoprocessorAppHwSource}/src/microblossom-coprocessor/vfpga_top.svh >/dev/null
               test -s ${qshellCoprocessorAppHwSource}/src/microblossom/hdl/microblossom_coprocessor_mmio.sv
               test -s ${qshellCoprocessorAppHwSource}/src/microblossom/hdl/microblossom_coprocessor_application.sv
+              floorplan="$(sed -n 's/^set(FPLAN_PATH "\(.*\)")$/\1/p' \
+                ${qshellCoprocessorAppHwSource}/CMakeLists.txt)"
+              test -s "$floorplan"
+              grep -F 'BUFGCE_DIV_X5Y0:BUFGCE_DIV_X7Y3' "$floorplan" >/dev/null
               touch "$out"
             '';
 
