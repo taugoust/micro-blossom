@@ -821,8 +821,11 @@
                   --replace-fail \
                     'load_apps(VFPGA_C0_0 "src/microblossom")' \
                     'load_apps(VFPGA_C0_0 "src/microblossom-coprocessor src/microblossom")'
+                # validation_checks_hw imports the shell contract, including its
+                # base floorplan. Override it afterwards with the composed
+                # application floorplan before create_hw renders Tcl.
                 sed -i \
-                  '/validation_checks_hw()/i set(FPLAN_PATH "${microblossomV80Floorplan}")' \
+                  '/load_apps(/i set(FPLAN_PATH "${microblossomV80Floorplan}")' \
                   "$out/CMakeLists.txt"
                 ${pkgs.jq}/bin/jq \
                   '. + {
@@ -1526,8 +1529,14 @@
                 ${qshellCoprocessorAppHwSource}/src/microblossom-coprocessor/vfpga_top.svh >/dev/null
               test -s ${qshellCoprocessorAppHwSource}/src/microblossom/hdl/microblossom_coprocessor_mmio.sv
               test -s ${qshellCoprocessorAppHwSource}/src/microblossom/hdl/microblossom_coprocessor_application.sv
+              coprocessor_cmake=${qshellCoprocessorAppHwSource}/CMakeLists.txt
               floorplan="$(sed -n 's/^set(FPLAN_PATH "\(.*\)")$/\1/p' \
-                ${qshellCoprocessorAppHwSource}/CMakeLists.txt)"
+                "$coprocessor_cmake")"
+              validation_line="$(grep -n '^validation_checks_hw()' "$coprocessor_cmake" | cut -d: -f1)"
+              floorplan_line="$(grep -n '^set(FPLAN_PATH ' "$coprocessor_cmake" | cut -d: -f1)"
+              create_line="$(grep -n '^create_hw()' "$coprocessor_cmake" | cut -d: -f1)"
+              test "$validation_line" -lt "$floorplan_line"
+              test "$floorplan_line" -lt "$create_line"
               test -s "$floorplan"
               grep -F 'BUFGCE_DIV_X5Y0:BUFGCE_DIV_X7Y3' "$floorplan" >/dev/null
               touch "$out"
