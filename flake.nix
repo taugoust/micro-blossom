@@ -13,7 +13,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=coprocessor-hybrid-services&rev=210a04bc39752975505cf963f232983e5e2a4470";
-    coyote.follows = "qshell/coyote";
+    coyote = {
+      url = "git+ssh://git@github.com/taugoust/Coyote.git?ref=app-floorplan-override&rev=297324e417a539bce43505f7c4e2558355360e83";
+      flake = false;
+    };
     coyote-nix.follows = "qshell/coyote-nix";
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
   };
@@ -34,7 +37,7 @@
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
       v80R5QshellRevision = "210a04bc39752975505cf963f232983e5e2a4470";
-      v80R5CoyoteRevision = "c801e3d47689c9255bec0d5348a9ddfcc662d29d";
+      v80R5CoyoteRevision = "297324e417a539bce43505f7c4e2558355360e83";
       v80R5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
       mkVerilator_5_014 =
         pkgs:
@@ -1539,6 +1542,10 @@
               test "$floorplan_line" -lt "$create_line"
               test -s "$floorplan"
               grep -F 'BUFGCE_DIV_X5Y0:BUFGCE_DIV_X7Y3' "$floorplan" >/dev/null
+              app_link=${coyote}/scripts/dyn/flow_app_link.tcl.in
+              grep -F 'add_files -fileset [get_filesets constrs_1] "$cfg(fplan_path)"' \
+                "$app_link" >/dev/null
+              grep -F 'set_property PROCESSING_ORDER LATE' "$app_link" >/dev/null
               touch "$out"
             '';
 
