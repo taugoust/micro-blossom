@@ -12,7 +12,7 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=coprocessor-hybrid-services&rev=210a04bc39752975505cf963f232983e5e2a4470";
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-microblossom-shell&rev=effe5892eae9c39da9bb30f6e226c3f8d21ffb2c";
     coyote = {
       url = "git+ssh://git@github.com/taugoust/Coyote.git?ref=app-floorplan-override&rev=297324e417a539bce43505f7c4e2558355360e83";
       flake = false;
@@ -36,7 +36,7 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
-      v80R5QshellRevision = "210a04bc39752975505cf963f232983e5e2a4470";
+      v80R5QshellRevision = "effe5892eae9c39da9bb30f6e226c3f8d21ffb2c";
       v80R5CoyoteRevision = "297324e417a539bce43505f7c4e2558355360e83";
       v80R5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
       mkVerilator_5_014 =
@@ -801,12 +801,11 @@
 
           coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.json;
 
-          microblossomV80Floorplan =
-            pkgs.runCommand "microblossom-v80-application-floorplan.xdc" { } ''
-              cat ${qshell.outPath}/hw/floorplans/qshell_v80.xdc > "$out"
-              cat ${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc} \
-                >> "$out"
-            '';
+          microblossomV80Floorplan = pkgs.runCommand "microblossom-v80-application-floorplan.xdc" { } ''
+            cat ${qshell.outPath}/hw/floorplans/qshell_v80.xdc > "$out"
+            cat ${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc} \
+              >> "$out"
+          '';
 
           d3QshellCoprocessorAppHwSource =
             pkgs.runCommand "microblossom-d3-qshell-coprocessor-app-hw-source" { }
@@ -1541,7 +1540,20 @@
               test "$validation_line" -lt "$floorplan_line"
               test "$floorplan_line" -lt "$create_line"
               test -s "$floorplan"
-              grep -F 'BUFGCE_DIV_X5Y0:BUFGCE_DIV_X7Y3' "$floorplan" >/dev/null
+              grep -F 'BUFGCE_DIV_X6Y0:BUFGCE_DIV_X6Y3' "$floorplan" >/dev/null
+              grep -F 'set_property NOC_HIGH_ID_MIN 6' "$floorplan" >/dev/null
+              grep -F 'set_property NOC_HIGH_ID_MAX 63' "$floorplan" >/dev/null
+              if grep -E 'BUFGCE_DIV_X(5|7)' "$floorplan"; then
+                echo 'V80 floorplan captures a static clock tile' >&2
+                exit 1
+              fi
+              floorplan_extension=${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc}
+              if grep -F 'resize_pblock' "$floorplan_extension"; then
+                echo 'packaged application attempts to resize the routed parent pblock' >&2
+                exit 1
+              fi
+              grep -F 'V80 shell does not reserve the MicroBlossom divider clock tile' \
+                "$floorplan_extension" >/dev/null
               app_link=${coyote}/scripts/dyn/flow_app_link.tcl.in
               grep -F 'add_files -fileset [get_filesets constrs_1] "$cfg(fplan_path)"' \
                 "$app_link" >/dev/null

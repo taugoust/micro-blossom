@@ -44,7 +44,7 @@ Every record carries the exact graph SHA-256 so a shell/application can reject o
 
 ## Current QShell envelope
 
-`rtl/microblossom_qshell_envelope.sv` consumes QShell's generated SystemVerilog constants from pinned `coprocessor-hybrid-services` revision `210a04bc39752975505cf963f232983e5e2a4470`; MicroBlossom does not redefine ABI offsets, classes, flags, or schema IDs. Each command uses one full header beat containing the first 16 MBQ1 bytes and one final 48-byte continuation. The adapter validates the syndrome class, command schema, exact 64-byte payload, contiguous keep masks, and `EndJob`/`END_OF_ROUND` relationship before presenting one complete internal MBQ1 record.
+`rtl/microblossom_qshell_envelope.sv` consumes QShell's generated SystemVerilog constants from pinned `v80-microblossom-shell` revision `effe5892eae9c39da9bb30f6e226c3f8d21ffb2c`; MicroBlossom does not redefine ABI offsets, classes, flags, or schema IDs. Each command uses one full header beat containing the first 16 MBQ1 bytes and one final 48-byte continuation. The adapter validates the syndrome class, command schema, exact 64-byte payload, contiguous keep masks, and `EndJob`/`END_OF_ROUND` relationship before presenting one complete internal MBQ1 record.
 
 A response reverses the request endpoints, preserves context/round/capability/route identity, uses the MicroBlossom response schema and correction class, and emits the 64-byte MBQ1 response in the same two-beat shape. Correction sequence numbers are independent of command sequence numbers and reset after terminal `Completion` or `Error` records. The adapter serializes commands until the internal frontend either returns a response or becomes ready again after a response-free operation, keeping request metadata unambiguous under backpressure.
 
@@ -72,7 +72,7 @@ The CPU-assisted V80 application uses one 96-byte, two-beat QShell record per de
 
 The packaged `microblossom_d3_coprocessor` host executable emits the canonical request through the existing Coyote process bridge and verifies correction edge `[2]`. It configures the bridge for the coarse record's 32-byte continuation; the host-driven MBQ1 path retains its 48-byte continuation.
 
-The deployment-facing build is intentionally two-stage. Build and retain `qshell-v80-r5-shell` once in the QShell repository, then build only this decoder service in MicroBlossom:
+The deployment-facing build is intentionally two-stage. Build and retain `qshell-v80-r5-shell` from the pinned MicroBlossom-compatible QShell revision once, then build only this decoder service in MicroBlossom. That shell preserves the accepted R5 implementation baseline while reserving the free V80 X6 divider tile and VNOC high-ID range during the original parent link; these resources cannot be added by a packaged application after importing a routed shell:
 
 ```sh
 nix build -L .#microblossom-d3-v80-r5-app -o result-v80-r5-app

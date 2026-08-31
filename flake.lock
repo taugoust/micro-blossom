@@ -791,17 +791,17 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1788157193,
-        "narHash": "sha256-NTQCK3kSce6fnDG4ISdnXIuSfyQs7E+QlyL8lxIIywY=",
-        "ref": "coprocessor-hybrid-services",
-        "rev": "210a04bc39752975505cf963f232983e5e2a4470",
-        "revCount": 128,
+        "lastModified": 1788201902,
+        "narHash": "sha256-gvTWTb2jMZTRIbb7U+xq0NLgCtCj0g2wgcMl580b5Fw=",
+        "ref": "v80-microblossom-shell",
+        "rev": "effe5892eae9c39da9bb30f6e226c3f8d21ffb2c",
+        "revCount": 129,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "coprocessor-hybrid-services",
-        "rev": "210a04bc39752975505cf963f232983e5e2a4470",
+        "ref": "v80-microblossom-shell",
+        "rev": "effe5892eae9c39da9bb30f6e226c3f8d21ffb2c",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }
