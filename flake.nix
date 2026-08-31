@@ -12,10 +12,7 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=coprocessor-hybrid-services";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=coprocessor-hybrid-services&rev=210a04bc39752975505cf963f232983e5e2a4470";
     coyote.follows = "qshell/coyote";
     coyote-nix.follows = "qshell/coyote-nix";
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
@@ -36,6 +33,9 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
+      v80R5QshellRevision = "210a04bc39752975505cf963f232983e5e2a4470";
+      v80R5CoyoteRevision = "c801e3d47689c9255bec0d5348a9ddfcc662d29d";
+      v80R5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
       mkVerilator_5_014 =
         pkgs:
         pkgs.verilator.overrideAttrs (_old: rec {
@@ -85,7 +85,7 @@
           qshellContractSource = qshellLib.qshellContractSource;
           qshellHostPackage = qshell.packages.${system}.qshell-host;
           qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
-          qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-coprocessor-shell;
+          qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-r5-shell;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
           xilinxShareRoot = doctor.xilinxShareRoot;
@@ -844,6 +844,9 @@
               "-DEN_V80_R5_PLATFORM:STRING=0"
               "-DPCIE_GEN:STRING=5"
             ];
+            # Match the accepted V80 shell's serialized physical flow; Vivado
+            # 2025.1 repeatedly crashed while constructing a parallel router.
+            implementation.resources.cores = 1;
             provenance = {
               application = "microblossom-d3-coprocessor-integration";
               graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
@@ -870,9 +873,9 @@
                   --application-metadata ${d3QshellCoprocessorApp}/metadata/app.json \
                   --runtime-identity ${r5ServiceFirmware}/metadata/runtime-identity \
                   --output "$out" \
-                  --qshell-revision 5faaf403931b5791fc9c3f51e9c26dac5475e8de \
-                  --coyote-revision c30aed6aac90c90daf0c5aa335d0cc38d128702f \
-                  --coyote-nix-revision 23612d574174ef4db7de6b7b67ac46b83b8aa8c5 \
+                  --qshell-revision ${v80R5QshellRevision} \
+                  --coyote-revision ${v80R5CoyoteRevision} \
+                  --coyote-nix-revision ${v80R5CoyoteNixRevision} \
                   --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
                 ln -s ${d3QshellCoprocessorApp} "$out/packages/application"
                 ln -s ${qshellV80CoprocessorShell} "$out/packages/shell"
@@ -1351,9 +1354,9 @@
                   --application-metadata app.json \
                   --runtime-identity runtime-identity \
                   --output generated \
-                  --qshell-revision 5faaf403931b5791fc9c3f51e9c26dac5475e8de \
-                  --coyote-revision c30aed6aac90c90daf0c5aa335d0cc38d128702f \
-                  --coyote-nix-revision 23612d574174ef4db7de6b7b67ac46b83b8aa8c5 \
+                  --qshell-revision ${v80R5QshellRevision} \
+                  --coyote-revision ${v80R5CoyoteRevision} \
+                  --coyote-nix-revision ${v80R5CoyoteNixRevision} \
                   --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
                 test "$(jq -er '.placement.bitstream_id' generated/decoder-contract.json)" = \
                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -1361,6 +1364,12 @@
                   bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
                 test "$(jq -er '.identities.firmwareRuntime' generated/manifest.json)" = \
                   "$runtime_identity"
+                test "$(jq -er '.dependencies.qshell' generated/manifest.json)" = \
+                  ${v80R5QshellRevision}
+                test "$(jq -er '.dependencies.coyote' generated/manifest.json)" = \
+                  ${v80R5CoyoteRevision}
+                test "$(jq -er '.dependencies.coyoteNix' generated/manifest.json)" = \
+                  ${v80R5CoyoteNixRevision}
                 cp -r generated "$out"
               '';
 
@@ -1419,7 +1428,7 @@
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
                 test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  5faaf403931b5791fc9c3f51e9c26dac5475e8de
+                  ${v80R5QshellRevision}
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
@@ -1471,23 +1480,28 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  5faaf403931b5791fc9c3f51e9c26dac5475e8de
+                  ${v80R5QshellRevision}
                 touch "$out"
               '';
 
           qshell-coprocessor-package =
-            assert coyoteNix.rev == "23612d574174ef4db7de6b7b67ac46b83b8aa8c5";
+            assert qshell.rev == v80R5QshellRevision;
+            assert coyote.rev == v80R5CoyoteRevision;
+            assert coyoteNix.rev == v80R5CoyoteNixRevision;
+            assert qshellLib.applicationContract.recordAbi == 2;
+            assert qshellLib.applicationContract.controlAbi == "qshell-control";
+            assert qshellLib.applicationContract.coyoteExternalServiceInterface == 1;
+            assert qshellLib.applicationContract.coyoteResidentControlInterface == 1;
             assert qshellCoprocessorApp.coyoteTwoStage.kind == "app";
             assert qshellCoprocessorApp.coyoteTwoStage.board == "v80";
             assert
               qshell.packages.${system}.qshell-v80-r5-shell
               == qshell.packages.${system}.qshell-v80-coprocessor-shell;
             assert
-              qshellCoprocessorApp.coyoteTwoStage.shellPackage
-              == qshell.packages.${system}.qshell-v80-coprocessor-shell;
+              qshellCoprocessorApp.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell;
             pkgs.runCommand "microblossom-qshell-coprocessor-package" { nativeBuildInputs = [ pkgs.jq ]; } ''
               test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                5faaf403931b5791fc9c3f51e9c26dac5475e8de
+                ${v80R5QshellRevision}
               test "$(jq -er '.coprocessor.logicalPort' \
                 ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 0
               test "$(jq -er '.coprocessor.streamAbi' \
@@ -1548,7 +1562,7 @@
                 core=${qshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
                 test "$(jq -er '.outerQshellEnvelope' "$core/core-manifest.json")" = 'QShell ABI 2'
                 test "$(jq -er '.qshellRevision' "$core/core-manifest.json")" = \
-                  5faaf403931b5791fc9c3f51e9c26dac5475e8de
+                  ${v80R5QshellRevision}
                 test "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
@@ -1842,6 +1856,7 @@
       "/share/xilinx"
       "/bin/touch=/run/current-system/sw/bin/touch"
       "/bin/lscpu=/run/current-system/sw/bin/lscpu"
+      "/usr/bin/lscpu=/run/current-system/sw/bin/lscpu"
     ];
   };
 }
