@@ -861,7 +861,10 @@
             ];
             # Match the accepted V80 shell's serialized physical flow; Vivado
             # 2025.1 repeatedly crashed while constructing a parallel router.
-            implementation.resources.cores = 1;
+            implementation = {
+              resources.cores = 1;
+              enforceTiming = false;
+            };
             provenance = {
               application = "microblossom-d3-coprocessor-integration";
               graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
