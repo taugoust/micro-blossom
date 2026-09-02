@@ -11,11 +11,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
-BEAT_BYTES = 64
-CONTINUATION_BYTES = 48
+import qshell_abi_generated as qshell_abi
+
+BEAT_BYTES = qshell_abi.BEAT_BYTES
+MBQ1_PAYLOAD_BYTES = 64
+CONTINUATION_BYTES = qshell_abi.HEADER_BYTES + MBQ1_PAYLOAD_BYTES - BEAT_BYTES
 FULL_KEEP = (1 << BEAT_BYTES) - 1
 CONTINUATION_KEEP = (1 << CONTINUATION_BYTES) - 1
-QSHELL_MAGIC = 0x32485351
 
 
 def valid_bytes(keep: int) -> int:
@@ -143,10 +145,16 @@ class XdbBeatBridge:
         )
         first = self._read_memory(self.rx_addr, BEAT_BYTES)
         continuation = self._read_memory(self.rx_addr + BEAT_BYTES, CONTINUATION_BYTES)
-        if struct.unpack_from("<I", first, 0)[0] != QSHELL_MAGIC or first[4] != 2:
-            raise RuntimeError("expected a QShell ABI-2 response")
-        payload_bytes = struct.unpack_from("<I", first, 12)[0]
-        if payload_bytes != BEAT_BYTES:
+        if (
+            struct.unpack_from("<I", first, qshell_abi.OFFSET_MAGIC)[0]
+            != qshell_abi.MAGIC
+            or first[qshell_abi.OFFSET_ABI_VERSION] != qshell_abi.VERSION
+        ):
+            raise RuntimeError("expected a current-QSH2 response")
+        payload_bytes = struct.unpack_from(
+            "<I", first, qshell_abi.OFFSET_PAYLOAD_BYTES
+        )[0]
+        if payload_bytes != MBQ1_PAYLOAD_BYTES:
             raise RuntimeError("expected one fixed-size MBQ1 response payload")
         self.rx_second = Beat(
             data=continuation + bytes(BEAT_BYTES - CONTINUATION_BYTES),
@@ -208,8 +216,8 @@ def run_protocol(bridge: XdbBeatBridge) -> int:
 
 
 def self_test() -> int:
-    assert valid_bytes(FULL_KEEP) == 64
-    assert valid_bytes(CONTINUATION_KEEP) == 48
+    assert valid_bytes(FULL_KEEP) == BEAT_BYTES
+    assert valid_bytes(CONTINUATION_KEEP) == CONTINUATION_BYTES
     try:
         valid_bytes(0x5)
     except ValueError:

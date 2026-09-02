@@ -1,22 +1,16 @@
 #include "provider.h"
 #include "provider_platform.h"
+#include "qshell_abi_generated.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
-#define QSHELL_MAGIC UINT32_C(0x32485351)
-#define QSHELL_ABI 2u
-#define QSHELL_HEADER_BYTES 48u
-#define QSHELL_CLASS_SYNDROME 1u
-#define QSHELL_CLASS_CORRECTION 2u
-#define QSHELL_FLAG_END_OF_ROUND UINT16_C(1)
-#define QSHELL_REQUEST_SCHEMA UINT32_C(0x00020003)
-#define QSHELL_RESULT_SCHEMA UINT32_C(0x00020004)
 #define REQUEST_MAGIC UINT32_C(0x314a424d)
 #define RESULT_MAGIC UINT32_C(0x3152424d)
 #define SERVICE_VERSION UINT16_C(1)
-#define PACKET_BYTES 96u
+#define DECODE_PAYLOAD_BYTES 48u
+#define PACKET_BYTES (QSHELL_HEADER_BYTES + DECODE_PAYLOAD_BYTES)
 #define MAX_DEFECTS 4u
 #define MAX_EDGES 2u
 #define MMIO_POLLS UINT32_C(4096)
@@ -97,15 +91,21 @@ uint16_t microblossom_service_decode(cyt_provider *provider, const uint8_t *pack
     enum cyt_provider_result result;
     *edge_count = 0u;
     *operations = 0u;
-    if (length != PACKET_BYTES || load32(packet) != QSHELL_MAGIC || packet[4] != QSHELL_ABI ||
-        packet[5] != QSHELL_CLASS_SYNDROME || load16(packet+6) != QSHELL_FLAG_END_OF_ROUND ||
-        load16(packet+8) != QSHELL_HEADER_BYTES || load32(packet+12) != 48u ||
-        load32(packet+24) != QSHELL_REQUEST_SCHEMA || load32(packet+48) != REQUEST_MAGIC ||
-        load16(packet+52) != SERVICE_VERSION || !equal_bytes(packet+56, graph_identity, 32u)) return 1u;
-    count = load16(packet+54);
+    if (length != PACKET_BYTES ||
+        load32(packet + QSHELL_OFFSET_MAGIC) != QSHELL_MAGIC ||
+        packet[QSHELL_OFFSET_ABI_VERSION] != QSHELL_ABI_VERSION ||
+        packet[QSHELL_OFFSET_RECORD_CLASS] != QSHELL_CLASS_SYNDROME ||
+        load16(packet + QSHELL_OFFSET_FLAGS) != QSHELL_FLAG_END_OF_ROUND ||
+        load16(packet + QSHELL_OFFSET_HEADER_BYTES) != QSHELL_HEADER_BYTES ||
+        load32(packet + QSHELL_OFFSET_PAYLOAD_BYTES) != DECODE_PAYLOAD_BYTES ||
+        load32(packet + QSHELL_OFFSET_SCHEMA_ID) != QSHELL_SCHEMA_MICROBLOSSOM_DECODE_REQUEST ||
+        load32(packet + QSHELL_HEADER_BYTES) != REQUEST_MAGIC ||
+        load16(packet + QSHELL_HEADER_BYTES + 4u) != SERVICE_VERSION ||
+        !equal_bytes(packet + QSHELL_HEADER_BYTES + 8u, graph_identity, 32u)) return 1u;
+    count = load16(packet + QSHELL_HEADER_BYTES + 6u);
     if (count > MAX_DEFECTS) return 2u;
     for (i=0u;i<count;++i) {
-        defects[i]=load16(packet+88u+2u*i);
+        defects[i]=load16(packet + QSHELL_HEADER_BYTES + 40u + 2u*i);
         if (defects[i] > 1u || (i != 0u && defects[i] <= defects[i-1u])) return 2u;
     }
     result=read64(provider,MMIO_HARDWARE_INFO,&value); ++*operations;
@@ -143,18 +143,21 @@ void microblossom_service_make_response(const uint8_t *input, uint8_t *output,
     size_t i;
     for (i=0u;i<PACKET_BYTES;++i) output[i]=0u;
     copy_bytes(output,input,QSHELL_HEADER_BYTES);
-    output[5]=QSHELL_CLASS_CORRECTION;
-    store32(output+12,48u);
-    store32(output+24,QSHELL_RESULT_SCHEMA);
-    store32(output+28,load32(input+32));
-    store32(output+32,load32(input+28));
-    store32(output+48,RESULT_MAGIC);
-    store16(output+52,SERVICE_VERSION);
-    store16(output+54,status);
-    copy_bytes(output+56,graph_identity,32u);
-    store16(output+88,edge_count);
-    store16(output+90,operations);
-    for (i=0u;i<edge_count && i<MAX_EDGES;++i) store16(output+92u+2u*i,edges[i]);
+    output[QSHELL_OFFSET_RECORD_CLASS]=QSHELL_CLASS_CORRECTION;
+    store32(output + QSHELL_OFFSET_PAYLOAD_BYTES,DECODE_PAYLOAD_BYTES);
+    store32(output + QSHELL_OFFSET_SCHEMA_ID,QSHELL_SCHEMA_MICROBLOSSOM_DECODE_RESULT);
+    store32(output + QSHELL_OFFSET_SOURCE_ENDPOINT_ID,
+            load32(input + QSHELL_OFFSET_DESTINATION_ENDPOINT_ID));
+    store32(output + QSHELL_OFFSET_DESTINATION_ENDPOINT_ID,
+            load32(input + QSHELL_OFFSET_SOURCE_ENDPOINT_ID));
+    store32(output + QSHELL_HEADER_BYTES,RESULT_MAGIC);
+    store16(output + QSHELL_HEADER_BYTES + 4u,SERVICE_VERSION);
+    store16(output + QSHELL_HEADER_BYTES + 6u,status);
+    copy_bytes(output + QSHELL_HEADER_BYTES + 8u,graph_identity,32u);
+    store16(output + QSHELL_HEADER_BYTES + 40u,edge_count);
+    store16(output + QSHELL_HEADER_BYTES + 42u,operations);
+    for (i=0u;i<edge_count && i<MAX_EDGES;++i)
+        store16(output + QSHELL_HEADER_BYTES + 44u + 2u*i,edges[i]);
 }
 
 void r5_main(void) {

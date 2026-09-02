@@ -7,12 +7,18 @@
   },
   "qec": {
     "code_family": "repetition-code-capacity",
-    "problem_sizes": [3],
+    "problem_sizes": [
+      3
+    ],
     "decoder_class": "hybrid"
   },
   "placement": {
-    "targets": ["v80"],
-    "slot_classes": ["coyote-region-0"],
+    "targets": [
+      "v80"
+    ],
+    "slot_classes": [
+      "coyote-region-0"
+    ],
     "bitstream_id": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "resources": {
@@ -39,16 +45,20 @@
     }
   },
   "syndrome_interface": {
-    "schema_id": 131075,
+    "schema_id": "microblossom_decode_request",
     "schema_name": "microblossom-d3-decode-request",
-    "record_classes": ["syndrome"],
+    "record_classes": [
+      "syndrome"
+    ],
     "max_payload_bytes": 48,
     "requires_end_of_round": true
   },
   "correction_interface": {
-    "schema_id": 131076,
+    "schema_id": "microblossom_decode_result",
     "schema_name": "microblossom-d3-decode-result",
-    "record_classes": ["correction"],
+    "record_classes": [
+      "correction"
+    ],
     "max_payload_bytes": 48,
     "requires_end_of_round": true
   },
@@ -72,12 +82,18 @@
     "bound_kind": "worst_case"
   },
   "lifecycle": {
-    "commands": ["identify", "start", "quiesce", "reset", "health"],
+    "commands": [
+      "identify",
+      "start",
+      "quiesce",
+      "reset",
+      "health"
+    ],
     "quiesce_requires_empty": true,
     "reset_clears_context": true
   },
   "provenance": {
-    "record_abi": 2,
+    "record_abi": "current",
     "control_abi": 1,
     "shell_compatibility_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "source_revision": "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"

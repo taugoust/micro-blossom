@@ -87,6 +87,7 @@
           qshellLib = qshell.lib.${system};
           qshellAbiSource = qshellLib.qshellAbiSource;
           qshellContractSource = qshellLib.qshellContractSource;
+          qshellAbiSpec = builtins.fromJSON (builtins.readFile "${qshellContractSource}/abi/qshell-abi.json");
           qshellHostPackage = qshell.packages.${system}.qshell-host;
           qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
           qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-r5-shell;
@@ -694,7 +695,7 @@
               provenance = {
                 application = "microblossom-d3-host-baseline";
                 graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
-                qshellRecordAbi = 2;
+                qshellRecordAbi = qshellAbiSpec.version;
                 mbqProtocol = 1;
                 acceleratorClockDivideBy = 2;
               };
@@ -926,7 +927,7 @@
                     maxHalfWeight = spec.maxHalfWeight;
                     measurementRounds = spec.measurementRounds;
                     graphSha256 = spec.graphSha256;
-                    qshellRecordAbi = 2;
+                    qshellRecordAbi = qshellAbiSpec.version;
                     mbqProtocol = 1;
                     acceleratorClockDivideBy = 2;
                   };
@@ -1020,6 +1021,7 @@
             ./src/cpu/r5-service/Makefile
             ./src/cpu/r5-service/linker.ld
             ./src/cpu/r5-service/service.c
+            ./src/cpu/r5-service/qshell_abi_generated.h
             ./src/cpu/r5-service/startup.S
             "${coyote}/sw/firmware/coprocessor/provider.c"
             "${coyote}/sw/firmware/coprocessor/provider.h"
@@ -1065,7 +1067,7 @@
             ];
           };
 
-          coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.json;
+          coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.template.json;
 
           microblossomV80Floorplan = pkgs.runCommand "microblossom-v80-application-floorplan.xdc" { } ''
             cp ${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc} \
@@ -1130,7 +1132,7 @@
             provenance = {
               application = "microblossom-d3-coprocessor-integration";
               graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
-              qshellRecordAbi = 2;
+              qshellRecordAbi = qshellAbiSpec.version;
               mbqProtocol = 1;
               coprocessorLogicalPort = 0;
               coprocessorStreamAbi = 1;
@@ -1150,6 +1152,7 @@
                 python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
                   --template ${coprocessorContractTemplate} \
                   --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                  --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
                   --application-metadata ${d3QshellCoprocessorApp}/metadata/app.json \
                   --runtime-identity ${r5ServiceFirmware}/metadata/runtime-identity \
                   --output "$out" \
@@ -1241,7 +1244,7 @@
               runHook postInstall
             '';
             meta = {
-              description = "One-sided Coyote beat bridge for MicroBlossom QShell ABI 2";
+              description = "One-sided Coyote beat bridge for MicroBlossom current QSH2 records";
               license = lib.licenses.mit;
               platforms = systems;
               mainProgram = "microblossom-qshell-coyote-bridge";
@@ -1307,6 +1310,7 @@
               name = "microblossom-qshell-${board}-xdb-bridge";
               runtimeInputs = [ pkgs.python3 ];
               text = ''
+                export PYTHONPATH=${./src/qshell/host}
                 exec python3 ${./src/qshell/host/microblossom_qshell_xdb_bridge.py} \
                   --xdb ${qshellXdb}/bin/microblossom-xdb-${board} "$@"
               '';
@@ -1346,17 +1350,19 @@
             v80 = mkD3QshellXdbRunner "v80";
           };
 
-          updateQshellRustAbi = pkgs.writeShellApplication {
-            name = "update-qshell-rust-abi";
+          updateQshellAbi = pkgs.writeShellApplication {
+            name = "update-qshell-abi";
             runtimeInputs = [
               pkgs.git
               pkgs.python3
             ];
             text = ''
               root="$(git rev-parse --show-toplevel)"
-              python3 "$root/src/qshell/tools/generate_qshell_rust_abi.py" \
+              python3 "$root/src/qshell/tools/generate_qshell_abi.py" \
                 --spec ${qshellContractSource}/abi/qshell-abi.json \
-                --out "$root/src/qshell/protocol/src/qshell_abi_generated.rs"
+                --rust-out "$root/src/qshell/protocol/src/qshell_abi_generated.rs" \
+                --c-out "$root/src/cpu/r5-service/qshell_abi_generated.h" \
+                --python-out "$root/src/qshell/host/qshell_abi_generated.py"
             '';
           };
         in
@@ -1400,7 +1406,7 @@
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-coprocessor-app-synth =
             d3QshellCoprocessorApp.coyoteTwoStage.stages.synth;
-          update-qshell-rust-abi = updateQshellRustAbi;
+          update-qshell-abi = updateQshellAbi;
           verilator-5_014 = verilator_5_014;
         }
         // graphMatrixPackages
@@ -1440,6 +1446,7 @@
           qshellU280Simulation = self.packages.${system}.microblossom-d3-qshell-u280-sim;
           qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
           qshellContractSource = qshell.lib.${system}.qshellContractSource;
+          qshellAbiSpec = builtins.fromJSON (builtins.readFile "${qshellContractSource}/abi/qshell-abi.json");
           graphSpecs = import ./nix/microblossom-graph-specs.nix;
           graphOutputNames = lib.concatMap (
             spec:
@@ -1591,8 +1598,8 @@
             touch "$out"
           '';
 
-          qshell-rust-abi-generated =
-            pkgs.runCommand "microblossom-qshell-rust-abi-generated"
+          qshell-abi-generated =
+            pkgs.runCommand "microblossom-qshell-abi-generated"
               {
                 nativeBuildInputs = [
                   pkgs.diffutils
@@ -1600,10 +1607,27 @@
                 ];
               }
               ''
-                python3 ${./src/qshell/tools/generate_qshell_rust_abi.py} \
+                python3 ${./src/qshell/tools/generate_qshell_abi.py} \
                   --spec ${qshellContractSource}/abi/qshell-abi.json \
-                  --out generated.rs
+                  --rust-out generated.rs \
+                  --c-out generated.h \
+                  --python-out generated.py
                 diff -u ${./src/qshell/protocol/src/qshell_abi_generated.rs} generated.rs
+                diff -u ${./src/cpu/r5-service/qshell_abi_generated.h} generated.h
+                diff -u ${./src/qshell/host/qshell_abi_generated.py} generated.py
+                if grep -n -E \
+                    '#define QSHELL_(MAGIC|ABI|HEADER_BYTES|CLASS|FLAG|.*SCHEMA)' \
+                    ${./src/cpu/r5-service/service.c}; then
+                  echo "R5 service contains a hand-written QSH2 definition" >&2
+                  exit 1
+                fi
+                if grep -n -E \
+                    '0x32485351|qshell_magic|QSHELL_MAGIC|BEAT_BYTES = [0-9]' \
+                    ${./src/qshell/host/microblossom_qshell_coyote_bridge.cpp} \
+                    ${./src/qshell/host/microblossom_qshell_xdb_bridge.py}; then
+                  echo "host bridge contains a hand-written QSH2 definition" >&2
+                  exit 1
+                fi
                 python3 ${./src/qshell/tools/check_qshell_wire_fixture.py} \
                   --spec ${qshellContractSource}/abi/qshell-abi.json \
                   --fixtures ${qshellContractSource}/abi/golden-fixtures.json
@@ -1645,22 +1669,7 @@
                 ];
               }
               ''
-                python3 - ${qshellContractSource}/contracts/decoder-contract.schema.json \
-                  ${./src/qshell/contracts/microblossom-d3-coprocessor.json} <<'PY'
-                import json
-                import sys
-                import jsonschema
-                schema = json.load(open(sys.argv[1]))
-                contract = json.load(open(sys.argv[2]))
-                jsonschema.Draft202012Validator(schema).validate(contract)
-                PY
-                contract=${./src/qshell/contracts/microblossom-d3-coprocessor.json}
-                test "$(jq -er '.syndrome_interface.schema_id' "$contract")" = 131075
-                test "$(jq -er '.correction_interface.schema_id' "$contract")" = 131076
-                test "$(jq -er '.auxiliary.coprocessor.firmware_abi' "$contract")" = \
-                  coyote-r5-provider-mmio-v1
-                test "$(jq -er '.provenance.source_revision' "$contract")" = \
-                  3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
+                contract=${./src/qshell/contracts/microblossom-d3-coprocessor.template.json}
                 runtime_identity='${
                   self.packages.${system}.microblossom-d3-r5-service-firmware.coyoteR5Firmware.runtimeIdentity
                 }'
@@ -1674,6 +1683,7 @@
                 python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
                   --template "$contract" \
                   --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                  --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
                   --application-metadata app.json \
                   --runtime-identity runtime-identity \
                   --output generated \
@@ -1681,6 +1691,16 @@
                   --coyote-revision ${v80R5CoyoteRevision} \
                   --coyote-nix-revision ${v80R5CoyoteNixRevision} \
                   --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
+                test "$(jq -er '.syndrome_interface.schema_id' generated/decoder-contract.json)" = \
+                  ${toString qshellAbiSpec.schemas.microblossom_decode_request}
+                test "$(jq -er '.correction_interface.schema_id' generated/decoder-contract.json)" = \
+                  ${toString qshellAbiSpec.schemas.microblossom_decode_result}
+                test "$(jq -er '.provenance.record_abi' generated/decoder-contract.json)" = \
+                  ${toString qshellAbiSpec.version}
+                test "$(jq -er '.auxiliary.coprocessor.firmware_abi' generated/decoder-contract.json)" = \
+                  coyote-r5-provider-mmio-v1
+                test "$(jq -er '.provenance.source_revision' generated/decoder-contract.json)" = \
+                  3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
                 test "$(jq -er '.placement.bitstream_id' generated/decoder-contract.json)" = \
                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
                 test "$(jq -er '.provenance.shell_compatibility_id' generated/decoder-contract.json)" = \
@@ -1705,6 +1725,7 @@
                 done
                 cc -std=c11 -Wall -Wextra -Werror $identity_flags \
                   -I${coyote}/sw/firmware/coprocessor \
+                  -I${./src/cpu/r5-service} \
                   ${./src/cpu/r5-service/service.c} \
                   ${./src/cpu/r5-service/service_test.c} -o service-test
                 ./service-test | tee service-test.log
@@ -1821,7 +1842,7 @@
             assert qshell.rev == v80R5QshellRevision;
             assert coyote.rev == v80R5CoyoteRevision;
             assert coyoteNix.rev == v80R5CoyoteNixRevision;
-            assert qshellLib.applicationContract.recordAbi == 2;
+            assert qshellLib.applicationContract.recordAbi == qshellAbiSpec.version;
             assert qshellLib.applicationContract.controlAbi == "qshell-control";
             assert qshellLib.applicationContract.coyoteExternalServiceInterface == 1;
             assert qshellLib.applicationContract.coyoteResidentControlInterface == 1;

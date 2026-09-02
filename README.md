@@ -105,7 +105,7 @@ nix build .#checks.x86_64-linux.d3-golden-decode
 nix build .#checks.x86_64-linux.qshell-frontend
 nix build .#checks.x86_64-linux.qshell-clock
 nix build .#checks.x86_64-linux.qshell-envelope
-nix build .#checks.x86_64-linux.qshell-rust-abi-generated
+nix build .#checks.x86_64-linux.qshell-abi-generated
 nix build .#checks.x86_64-linux.qshell-core
 nix build .#checks.x86_64-linux.qshell-application
 nix build .#checks.x86_64-linux.d3-qshell-golden-decode
@@ -117,8 +117,8 @@ nix build .#microblossom-circuit-level-d9-qshell-u280-app
 nix build .#microblossom-circuit-level-d9-qshell-v80-app
 nix flake check
 
-# Regenerate the checked Rust ABI constants from the pinned QShell spec.
-nix run .#update-qshell-rust-abi
+# Regenerate the checked Rust, C, and Python ABI bindings from the pinned QShell spec.
+nix run .#update-qshell-abi
 
 # Format migration-owned Nix and Rust sources through treefmt-nix.
 nix fmt -- flake.nix src/cpu/embedded/build.rs \

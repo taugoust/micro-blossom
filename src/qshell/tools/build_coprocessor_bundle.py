@@ -27,6 +27,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--schema", type=Path, required=True)
+    parser.add_argument("--abi-spec", type=Path, required=True)
     parser.add_argument("--application-metadata", type=Path, required=True)
     parser.add_argument("--runtime-identity", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -38,6 +39,13 @@ def main() -> None:
 
     contract = json.loads(args.template.read_text())
     schema = json.loads(args.schema.read_text())
+    abi_spec = json.loads(args.abi_spec.read_text())
+    record_abi = abi_spec["version"]
+    request_schema = abi_spec["schemas"]["microblossom_decode_request"]
+    result_schema = abi_spec["schemas"]["microblossom_decode_result"]
+    contract["syndrome_interface"]["schema_id"] = request_schema
+    contract["correction_interface"]["schema_id"] = result_schema
+    contract["provenance"]["record_abi"] = record_abi
     application = json.loads(args.application_metadata.read_text())
     application_id = identity(application["application"]["id"], "application ID")
     shell_id = identity(application["shell"]["compatibilityId"], "shell compatibility ID")
@@ -66,9 +74,9 @@ def main() -> None:
         },
         "dependencies": dependencies,
         "abi": {
-            "qshellRecord": 2,
-            "requestSchema": 131075,
-            "resultSchema": 131076,
+            "qshellRecord": record_abi,
+            "requestSchema": request_schema,
+            "resultSchema": result_schema,
             "logicalPort": 0,
             "stream": 1,
             "mmio": 1,

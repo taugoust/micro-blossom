@@ -1,4 +1,5 @@
 #include <coyote/cThread.hpp>
+#include <qshell/qshell_abi_generated.hpp>
 
 #include <array>
 #include <chrono>
@@ -15,9 +16,11 @@ namespace {
 
 constexpr std::uint8_t request_write = 1;
 constexpr std::uint8_t request_read = 2;
-constexpr std::size_t beat_bytes = 64;
-constexpr std::size_t header_bytes = 48;
-constexpr std::uint32_t qshell_magic = 0x32485351;
+constexpr std::size_t beat_bytes = ::qshell::abi::beat_bytes;
+constexpr std::size_t header_bytes = ::qshell::abi::header_bytes;
+constexpr std::size_t mbq_payload_bytes = 64;
+constexpr std::size_t default_continuation_bytes =
+    header_bytes + mbq_payload_bytes - beat_bytes;
 
 std::uint32_t load_u32(const std::uint8_t *bytes) {
   std::uint32_t value = 0;
@@ -40,13 +43,13 @@ void store_u64(std::ostream &stream, std::uint64_t value) {
 }
 
 std::uint64_t low_keep(std::size_t bytes) {
-  return bytes == 64 ? std::numeric_limits<std::uint64_t>::max()
+  return bytes == beat_bytes ? std::numeric_limits<std::uint64_t>::max()
                      : (std::uint64_t{1} << bytes) - 1;
 }
 
 std::size_t valid_bytes(std::uint64_t keep) {
   if (keep == std::numeric_limits<std::uint64_t>::max()) {
-    return 64;
+    return beat_bytes;
   }
   std::size_t count = 0;
   while ((keep & 1U) != 0) {
@@ -124,11 +127,15 @@ public:
     thread_.invoke(coyote::CoyoteOper::LOCAL_WRITE, second, true);
     wait_for(coyote::CoyoteOper::LOCAL_WRITE);
 
-    if (load_u32(memory_) != qshell_magic || memory_[4] != 2 ||
-        load_u32(memory_ + 12) <= beat_bytes - header_bytes) {
-      throw std::runtime_error("expected a multi-beat QShell ABI-2 response");
+    if (load_u32(memory_ + ::qshell::abi::offset::magic) !=
+            ::qshell::abi::magic ||
+        memory_[::qshell::abi::offset::abi_version] != ::qshell::abi::version ||
+        load_u32(memory_ + ::qshell::abi::offset::payload_bytes) <=
+            beat_bytes - header_bytes) {
+      throw std::runtime_error("expected a multi-beat current-QSH2 response");
     }
-    const auto payload_bytes = load_u32(memory_ + 12);
+    const auto payload_bytes =
+        load_u32(memory_ + ::qshell::abi::offset::payload_bytes);
     const auto continuation = payload_bytes - (beat_bytes - header_bytes);
     if (continuation != expected_continuation_) {
       throw std::runtime_error("QShell response continuation length mismatch");
@@ -177,7 +184,9 @@ void write_error(const std::string &message) {
 }
 
 int self_test() {
-  if (valid_bytes(low_keep(48)) != 48 || valid_bytes(~std::uint64_t{0}) != 64) {
+  if (valid_bytes(low_keep(default_continuation_bytes)) !=
+          default_continuation_bytes ||
+      valid_bytes(~std::uint64_t{0}) != beat_bytes) {
     return 1;
   }
   try {
@@ -198,7 +207,7 @@ int main(int argc, char **argv) {
 
   std::int32_t vfpga_id = 0;
   std::chrono::milliseconds timeout{1000};
-  std::size_t continuation_bytes = header_bytes;
+  std::size_t continuation_bytes = default_continuation_bytes;
   for (int index = 1; index < argc; ++index) {
     const std::string argument(argv[index]);
     if (argument == "--vfpga" && index + 1 < argc) {
