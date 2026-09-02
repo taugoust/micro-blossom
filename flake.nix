@@ -802,9 +802,8 @@
           coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.json;
 
           microblossomV80Floorplan = pkgs.runCommand "microblossom-v80-application-floorplan.xdc" { } ''
-            cat ${qshell.outPath}/hw/floorplans/qshell_v80.xdc > "$out"
-            cat ${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc} \
-              >> "$out"
+            cp ${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc} \
+              "$out"
           '';
 
           d3QshellCoprocessorAppHwSource =
@@ -1553,11 +1552,12 @@
               test "$validation_line" -lt "$floorplan_line"
               test "$floorplan_line" -lt "$create_line"
               test -s "$floorplan"
-              grep -F 'BUFGCE_DIV_X6Y0:BUFGCE_DIV_X6Y3' "$floorplan" >/dev/null
-              grep -F 'set_property NOC_HIGH_ID_MIN 6' "$floorplan" >/dev/null
-              grep -F 'set_property NOC_HIGH_ID_MAX 63' "$floorplan" >/dev/null
-              if grep -E 'BUFGCE_DIV_X(5|7)' "$floorplan"; then
-                echo 'V80 floorplan captures a static clock tile' >&2
+              parent_floorplan=${qshell.outPath}/hw/floorplans/qshell_v80.xdc
+              grep -F 'BUFGCE_DIV_X6Y0:BUFGCE_DIV_X6Y3' "$parent_floorplan" >/dev/null
+              grep -F 'set_property NOC_HIGH_ID_MIN 6' "$parent_floorplan" >/dev/null
+              grep -F 'set_property NOC_HIGH_ID_MAX 63' "$parent_floorplan" >/dev/null
+              if grep -E 'BUFGCE_DIV_X(5|7)' "$parent_floorplan"; then
+                echo 'V80 parent floorplan captures a static clock tile' >&2
                 exit 1
               fi
               floorplan_extension=${./src/qshell/app/src/microblossom-coprocessor/microblossom_v80_floorplan_extension.xdc}
