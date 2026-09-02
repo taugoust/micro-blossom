@@ -1487,6 +1487,7 @@
                 fi
                 grep -F 'USED_IN_IMPLEMENTATION true' "$app/init_ip.tcl" >/dev/null
                 grep -F 'MICROBLOSSOM_VERSAL_HBM' "$app/init_ip.tcl" >/dev/null
+                grep -F 'xcv80*' "$app/init_ip.tcl" >/dev/null
                 grep -F '.SIM_DEVICE("VERSAL_HBM")' \
                   "$hdl/microblossom_qshell_clock_div2.sv" >/dev/null
                 grep -F 'vfpga_src_dir/hdl' \
