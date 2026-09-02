@@ -1479,7 +1479,16 @@
                   "$app/microblossom_qshell_timing.xdc" >/dev/null
                 grep -F 'set_bus_skew 8.000' \
                   "$app/microblossom_qshell_timing.xdc" >/dev/null
+                grep -F 'get_cells -quiet -hierarchical' \
+                  "$app/microblossom_qshell_timing.xdc" >/dev/null
+                if grep -E '^(if|foreach) ' "$app/microblossom_qshell_timing.xdc"; then
+                  echo 'timing XDC contains unsupported Tcl control flow' >&2
+                  exit 1
+                fi
                 grep -F 'USED_IN_IMPLEMENTATION true' "$app/init_ip.tcl" >/dev/null
+                grep -F 'MICROBLOSSOM_VERSAL_HBM' "$app/init_ip.tcl" >/dev/null
+                grep -F '.SIM_DEVICE("VERSAL_HBM")' \
+                  "$hdl/microblossom_qshell_clock_div2.sv" >/dev/null
                 grep -F 'vfpga_src_dir/hdl' \
                   ${coyote}/scripts/cr_prjcts/cr_user.tcl.in >/dev/null
                 test ! -e "$app/microblossom_qshell_application.sv"
@@ -1555,8 +1564,10 @@
                 echo 'packaged application attempts to resize the routed parent pblock' >&2
                 exit 1
               fi
-              grep -F 'V80 shell does not reserve the MicroBlossom divider clock tile' \
-                "$floorplan_extension" >/dev/null
+              if grep -E '^(if|foreach) ' "$floorplan_extension"; then
+                echo 'floorplan XDC contains unsupported Tcl control flow' >&2
+                exit 1
+              fi
               app_link=${coyote}/scripts/dyn/flow_app_link.tcl.in
               grep -F 'add_files -fileset [get_filesets constrs_1] "$cfg(fplan_path)"' \
                 "$app_link" >/dev/null

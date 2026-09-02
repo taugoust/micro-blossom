@@ -26,7 +26,12 @@ end
 assign slow_clk = slow_clk_sim;
 `else
 BUFGCE_DIV #(
-    .BUFGCE_DIVIDE(2)
+    .BUFGCE_DIVIDE(2),
+`ifdef MICROBLOSSOM_VERSAL_HBM
+    .SIM_DEVICE("VERSAL_HBM")
+`else
+    .SIM_DEVICE("ULTRASCALE")
+`endif
 ) inst_slow_clock_buffer (
     .I(aclk),
     .CE(1'b1),
