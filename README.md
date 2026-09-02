@@ -79,7 +79,8 @@ The first QShell migration stage provides a pinned, board-independent Nix baseli
 - `qshell-u280-shell-synth`: the exact pinned QShell U280 shell synthesis gate, without placement or routing;
 - `qshell-u280-shell`: the exact pinned full QShell U280 shell required before loading the application partial;
 - `microblossom-d3-qshell-{u280,v80}-app-synth`: application synthesis stages against the corresponding routed QShell shells;
-- `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed host-driven application/partial-image packages;
+- `microblossom-d3-qshell-{u280,v80}-app`: complete separately routed host-driven application/partial-image packages for the canonical repetition-code fixture;
+- `microblossom-<graph>-d<distance>-qshell-{u280,v80}-app`: strict-timing host-driven QShell applications for every graph and distance enumerated by MicroBlossom's example generator. Supported matrices are `code-capacity-repetition` d3/d5, `code-capacity-planar` d3/d5/d7, `code-capacity-rotated` odd d3–d27, `phenomenological-rotated` odd d3–d17, and `circuit-level` odd d3–d17. Corresponding `-graph`, `-rtl`, `-qshell-core`, `-qshell-app-hw-source`, and `-app-synth` outputs are available. These are host-driven applications; the graph-specific V80 R5 service remains d3-only;
 - `microblossom-d3-v80-r5-app`: user-facing V80 service package containing the separately routed MicroBlossom vFPGA partial PDI, R5 service ELF, host runner/control tools, and exact QShell compatibility metadata; build `qshell#qshell-v80-r5-shell` once, then build this app without reimplementing QShell;
 - `microblossom-d3-v80-r5-app-{synth,routed}`: explicit application-only implementation stages for durable Nix GC roots;
 - `microblossom-d3-v80-r5-firmware`: TCM-bounded R5 service ELF with the canonical d3 primal service, selected-application MMIO access, and an immutable runtime identity;
@@ -112,6 +113,8 @@ nix build .#checks.x86_64-linux.qshell-u280-xdb-d3
 nix build .#qshell-u280-shell-synth
 nix build .#microblossom-d3-qshell-u280-app-synth
 nix build .#microblossom-d3-qshell-v80-app-synth
+nix build .#microblossom-circuit-level-d9-qshell-u280-app
+nix build .#microblossom-circuit-level-d9-qshell-v80-app
 nix flake check
 
 # Regenerate the checked Rust ABI constants from the pinned QShell spec.

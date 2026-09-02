@@ -65,6 +65,7 @@
           settings.formatter.nixfmt.includes = [ "*.nix" ];
           settings.formatter.rustfmt.includes = nixpkgs.lib.mkForce [
             "src/cpu/blossom/src/bin/generate_nix_d3_fixture.rs"
+            "src/cpu/blossom/src/bin/generate_nix_fixture.rs"
             "src/cpu/blossom/src/bin/microblossom_d3_qshell_coyote.rs"
             "src/cpu/blossom/src/dual_module_qshell.rs"
             "src/cpu/blossom/src/util.rs"
@@ -289,7 +290,7 @@
             }
           );
 
-          baseHostCargoExtraArgs = "--locked --bin micro_blossom --bin generate_nix_d3_fixture";
+          baseHostCargoExtraArgs = "--locked --bin micro_blossom --bin generate_nix_d3_fixture --bin generate_nix_fixture";
           hostCargoExtraArgs = "${baseHostCargoExtraArgs} --bin microblossom_d3_qshell_coyote";
           simulatorCargoExtraArgs = "${baseHostCargoExtraArgs} --bin embedded_simulator";
 
@@ -303,6 +304,8 @@
                 install -Dm755 target/release/micro_blossom "$out/bin/micro_blossom"
                 install -Dm755 target/release/generate_nix_d3_fixture \
                   "$out/bin/generate_nix_d3_fixture"
+                install -Dm755 target/release/generate_nix_fixture \
+                  "$out/bin/generate_nix_fixture"
                 install -Dm755 target/release/microblossom_d3_qshell_coyote \
                   "$out/bin/microblossom_d3_qshell_coyote"
               '';
@@ -701,6 +704,269 @@
             u280 = mkD3QshellApp "u280";
             v80 = mkD3QshellApp "v80";
           };
+
+          graphSpecs = import ./nix/microblossom-graph-specs.nix;
+
+          mkGraphFixture =
+            spec:
+            pkgs.runCommand "microblossom-${spec.id}-graph-v1"
+              {
+                nativeBuildInputs = [
+                  microblossomHost
+                  pkgs.coreutils
+                  pkgs.jq
+                ];
+              }
+              ''
+                fixture="$out/share/microblossom/fixtures/${spec.id}-v1"
+                mkdir -p "$fixture"
+                generate_nix_fixture \
+                  "$fixture/graph.json" \
+                  ${spec.generatorVariant} \
+                  ${toString spec.distance}
+
+                graph_sha256="$(sha256sum "$fixture/graph.json" | cut -d' ' -f1)"
+                vertex_num="$(jq -er '.vertex_num' "$fixture/graph.json")"
+                edge_num="$(jq -er '.weighted_edges | length' "$fixture/graph.json")"
+                virtual_vertex_num="$(jq -er '.virtual_vertices | length' "$fixture/graph.json")"
+                test "$graph_sha256" = ${spec.graphSha256}
+                test "$vertex_num" = ${toString spec.vertexNum}
+                test "$edge_num" = ${toString spec.edgeNum}
+                test "$virtual_vertex_num" = ${toString spec.virtualVertexNum}
+
+                jq -n \
+                  --arg fixtureId '${spec.id}-v1' \
+                  --arg family ${spec.generatorVariant} \
+                  --argjson distance ${toString spec.distance} \
+                  --argjson physicalErrorRate ${toString spec.physicalErrorRate} \
+                  --argjson maxHalfWeight ${toString spec.maxHalfWeight} \
+                  --argjson measurementRounds '${builtins.toJSON spec.measurementRounds}' \
+                  --arg graphSha256 "$graph_sha256" \
+                  --arg sourceRevision '${self.rev or "dirty"}' \
+                  --argjson vertexNum "$vertex_num" \
+                  --argjson edgeNum "$edge_num" \
+                  --argjson virtualVertexNum "$virtual_vertex_num" \
+                  '{
+                    schemaVersion: 1,
+                    fixture: {
+                      id: $fixtureId,
+                      family: $family,
+                      distance: $distance,
+                      physicalErrorRate: $physicalErrorRate,
+                      maxHalfWeight: $maxHalfWeight,
+                      measurementRounds: $measurementRounds
+                    },
+                    generated: {
+                      graphFile: "graph.json",
+                      graphSha256: $graphSha256,
+                      vertexNum: $vertexNum,
+                      edgeNum: $edgeNum,
+                      virtualVertexNum: $virtualVertexNum
+                    },
+                    provenance: {
+                      microblossomRevision: $sourceRevision,
+                      rustToolchain: "nightly-2023-11-16"
+                    }
+                  }' > "$fixture/manifest.json"
+              '';
+
+          mkGraphRtl =
+            spec: fixture:
+            pkgs.runCommand "microblossom-${spec.id}-rtl-v1"
+              {
+                nativeBuildInputs = [
+                  pkgs.coreutils
+                  pkgs.jdk11
+                  pkgs.jq
+                ];
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                mkdir -p "$HOME" "$TMPDIR/generated"
+                fixture=${fixture}/share/microblossom/fixtures/${spec.id}-v1
+
+                java -Xmx16G \
+                  -cp ${microblossomScala}/share/java/microblossom.jar \
+                  microblossom.MicroBlossomBusGenerator \
+                  --graph "$fixture/graph.json" \
+                  --output-dir "$TMPDIR/generated" \
+                  --bus-type Axi4 \
+                  --language-hdl verilog \
+                  --base-address 0 \
+                  --broadcast-delay 0 \
+                  --convergecast-delay 1 \
+                  --context-depth 1 \
+                  --conflict-channels 1 \
+                  --clock-divide-by 2
+
+                test -s "$TMPDIR/generated/MicroBlossomBus.v"
+                rtl="$out/share/microblossom/rtl/${spec.id}-v1"
+                mkdir -p "$rtl"
+                cp -R "$TMPDIR/generated"/. "$rtl/"
+                cp "$fixture/manifest.json" "$rtl/graph-manifest.json"
+
+                jq -n \
+                  --arg fixtureId '${spec.id}-v1' \
+                  --arg graphSha256 ${spec.graphSha256} \
+                  --arg rtlSha256 "$(sha256sum "$rtl/MicroBlossomBus.v" | cut -d' ' -f1)" \
+                  --arg generatorJarSha256 "$(sha256sum ${microblossomScala}/share/java/microblossom.jar | cut -d' ' -f1)" \
+                  '{
+                    schemaVersion: 1,
+                    fixtureId: $fixtureId,
+                    topModule: "MicroBlossomBus",
+                    busType: "Axi4",
+                    graphSha256: $graphSha256,
+                    rtlSha256: $rtlSha256,
+                    generatorJarSha256: $generatorJarSha256
+                  }' > "$rtl/rtl-manifest.json"
+              '';
+
+          mkGraphQshellCore =
+            spec: rtl:
+            pkgs.runCommand "microblossom-${spec.id}-qshell-core-v1"
+              {
+                nativeBuildInputs = [
+                  pkgs.coreutils
+                  pkgs.jq
+                ];
+              }
+              ''
+                src=${rtl}/share/microblossom/rtl/${spec.id}-v1
+                core="$out/share/microblossom/qshell-core/${spec.id}-v1"
+                mkdir -p "$core"
+                cp "$src/MicroBlossomBus.v" "$core/"
+                cp "$src/graph-manifest.json" "$src/rtl-manifest.json" "$core/"
+                cp ${./src/qshell/rtl/microblossom_qshell_frontend.sv} \
+                  "$core/microblossom_qshell_frontend.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_core.sv} \
+                  "$core/microblossom_qshell_core.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
+                  "$core/microblossom_qshell_clock_div2.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_envelope.sv} \
+                  "$core/microblossom_qshell_envelope.sv"
+                cp ${./src/qshell/rtl/microblossom_qshell_application.sv} \
+                  "$core/microblossom_qshell_application.sv"
+                cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
+                  "$core/qshell_abi_generated.svh"
+                cp ${./src/qshell/README.md} "$core/protocol.md"
+
+                jq -n \
+                  --arg fixtureId '${spec.id}-v1' \
+                  --arg family ${spec.generatorVariant} \
+                  --argjson distance ${toString spec.distance} \
+                  --argjson physicalErrorRate ${toString spec.physicalErrorRate} \
+                  --argjson maxHalfWeight ${toString spec.maxHalfWeight} \
+                  --argjson measurementRounds '${builtins.toJSON spec.measurementRounds}' \
+                  --arg graphSha256 ${spec.graphSha256} \
+                  --arg acceleratorRtlSha256 "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" \
+                  --arg qshellRevision '${qshell.rev}' \
+                  '{
+                    schemaVersion: 1,
+                    fixtureId: $fixtureId,
+                    graphFamily: $family,
+                    codeDistance: $distance,
+                    physicalErrorRate: $physicalErrorRate,
+                    maxHalfWeight: $maxHalfWeight,
+                    measurementRounds: $measurementRounds,
+                    topModule: "microblossom_qshell_application",
+                    protocol: "MBQ1",
+                    protocolVersion: 1,
+                    streamDataBits: 512,
+                    internalRecordBytes: 64,
+                    axiDataBits: 64,
+                    axiAddressBits: 23,
+                    timeoutCyclesDefault: 1024,
+                    acceleratorClockDivideBy: 2,
+                    acceleratorClockInput: "slow_clk",
+                    acceleratorClockStrategy: "BUFGCE_DIV/2",
+                    outerQshellEnvelope: "QShell ABI 2",
+                    outerQshellRequestBeats: 2,
+                    outerQshellResponseBeats: 2,
+                    qshellRevision: $qshellRevision,
+                    graphSha256: $graphSha256,
+                    acceleratorRtlSha256: $acceleratorRtlSha256
+                  }' > "$core/core-manifest.json"
+              '';
+
+          mkGraphQshellAppHwSource =
+            spec: core:
+            pkgs.runCommand "microblossom-${spec.id}-qshell-app-hw-source-v1" { } ''
+              cp -R ${./src/qshell/app}/. "$out"
+              chmod -R u+w "$out"
+              hdl="$out/src/microblossom/hdl"
+              core=${core}/share/microblossom/qshell-core/${spec.id}-v1
+              mkdir -p "$hdl"
+              cp "$core/MicroBlossomBus.v" "$hdl/"
+              cp "$core/microblossom_qshell_frontend.sv" "$hdl/"
+              cp "$core/microblossom_qshell_core.sv" "$hdl/"
+              cp "$core/microblossom_qshell_clock_div2.sv" "$hdl/"
+              cp "$core/microblossom_qshell_envelope.sv" "$hdl/"
+              cp "$core/microblossom_qshell_application.sv" "$hdl/"
+              cp "$core/qshell_abi_generated.svh" "$hdl/"
+              cp "$core/core-manifest.json" "$out/"
+            '';
+
+          mkGraphEntry =
+            spec:
+            let
+              fixture = mkGraphFixture spec;
+              rtl = mkGraphRtl spec fixture;
+              core = mkGraphQshellCore spec rtl;
+              hwSource = mkGraphQshellAppHwSource spec core;
+              mkApp =
+                board:
+                qshellLib.mkQshellAppPackage {
+                  pname = "microblossom-${spec.id}-qshell-${board}-app";
+                  inherit hwSource board;
+                  provenance = {
+                    application = "microblossom-host-driven";
+                    graphFamily = spec.generatorVariant;
+                    codeDistance = spec.distance;
+                    physicalErrorRate = spec.physicalErrorRate;
+                    maxHalfWeight = spec.maxHalfWeight;
+                    measurementRounds = spec.measurementRounds;
+                    graphSha256 = spec.graphSha256;
+                    qshellRecordAbi = 2;
+                    mbqProtocol = 1;
+                    acceleratorClockDivideBy = 2;
+                  };
+                };
+            in
+            {
+              inherit
+                spec
+                fixture
+                rtl
+                core
+                hwSource
+                ;
+              apps = {
+                u280 = mkApp "u280";
+                v80 = mkApp "v80";
+              };
+            };
+
+          graphMatrix = lib.listToAttrs (
+            map (spec: lib.nameValuePair spec.id (mkGraphEntry spec)) graphSpecs
+          );
+
+          graphMatrixPackages = lib.foldl' (
+            packages: entry:
+            let
+              prefix = "microblossom-${entry.spec.id}";
+            in
+            packages
+            // {
+              "${prefix}-graph" = entry.fixture;
+              "${prefix}-rtl" = entry.rtl;
+              "${prefix}-qshell-core" = entry.core;
+              "${prefix}-qshell-app-hw-source" = entry.hwSource;
+              "${prefix}-qshell-u280-app" = entry.apps.u280;
+              "${prefix}-qshell-u280-app-synth" = entry.apps.u280.coyoteTwoStage.stages.synth;
+              "${prefix}-qshell-v80-app" = entry.apps.v80;
+              "${prefix}-qshell-v80-app-synth" = entry.apps.v80.coyoteTwoStage.stages.synth;
+            }
+          ) { } (lib.attrValues graphMatrix);
 
           r5PlatformContract = {
             api = "coyote.v80-r5-platform/v1";
@@ -1138,6 +1404,7 @@
           update-qshell-rust-abi = updateQshellRustAbi;
           verilator-5_014 = verilator_5_014;
         }
+        // graphMatrixPackages
         // coyoteDriverPackages
       );
 
@@ -1145,6 +1412,7 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          lib = pkgs.lib;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
           xilinxShareRoot = doctor.xilinxShareRoot;
@@ -1173,9 +1441,50 @@
           qshellU280Simulation = self.packages.${system}.microblossom-d3-qshell-u280-sim;
           qshellAbiSource = qshell.lib.${system}.qshellAbiSource;
           qshellContractSource = qshell.lib.${system}.qshellContractSource;
+          graphSpecs = import ./nix/microblossom-graph-specs.nix;
+          graphOutputNames = lib.concatMap (
+            spec:
+            let
+              prefix = "microblossom-${spec.id}";
+            in
+            [
+              "${prefix}-graph"
+              "${prefix}-rtl"
+              "${prefix}-qshell-core"
+              "${prefix}-qshell-app-hw-source"
+              "${prefix}-qshell-u280-app"
+              "${prefix}-qshell-u280-app-synth"
+              "${prefix}-qshell-v80-app"
+              "${prefix}-qshell-v80-app-synth"
+            ]
+          ) graphSpecs;
+          graphOutputsPresent = lib.all (
+            name: builtins.hasAttr name self.packages.${system}
+          ) graphOutputNames;
         in
         {
           formatting = (treefmtEval system).config.build.check self;
+          graph-matrix-contract =
+            assert builtins.length graphSpecs == 34;
+            assert builtins.length (lib.unique (map (spec: spec.id) graphSpecs)) == 34;
+            assert graphOutputsPresent;
+            pkgs.runCommand "microblossom-graph-matrix-contract" { nativeBuildInputs = [ pkgs.jq ]; } ''
+              cat > specs.json <<'EOF'
+              ${builtins.toJSON graphSpecs}
+              EOF
+              jq -e '
+                length == 34 and
+                ([.[] | select(.generatorVariant == "repetition")] | length == 2) and
+                ([.[] | select(.generatorVariant == "planar")] | length == 3) and
+                ([.[] | select(.generatorVariant == "rotated")] | length == 13) and
+                ([.[] | select(.generatorVariant == "phenomenological")] | length == 8) and
+                ([.[] | select(.generatorVariant == "circuit")] | length == 8) and
+                all(.[]; (.distance >= 3 and (.distance % 2) == 1) and
+                  (.physicalErrorRate > 0) and (.maxHalfWeight > 0) and
+                  (.graphSha256 | test("^[0-9a-f]{64}$")))
+              ' specs.json >/dev/null
+              cp specs.json "$out"
+            '';
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
           qshell-u280-xdb-d3 =
             pkgs.runCommand "microblossom-d3-qshell-u280-xdb-check"
