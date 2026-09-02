@@ -12,9 +12,9 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=reusable-shell-build-repair&rev=ff7b268f857195cde36a08564454d5cc3c3462aa";
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=reusable-shell-build-repair&rev=9e591eedc6f5acc531b3b98c095744c803d28244";
     coyote = {
-      url = "git+ssh://git@github.com/taugoust/Coyote.git?ref=debug-hub-strobe-width&rev=c6aeb63e29e4ef63661bfce402999572b5916fbc";
+      url = "git+ssh://git@github.com/taugoust/Coyote.git?ref=debug-hub-strobe-width&rev=8314f9183be8d22ab66920c3b2d6eca70bfea425";
       flake = false;
     };
     coyote-nix.follows = "qshell/coyote-nix";
@@ -36,8 +36,8 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
-      v80R5QshellRevision = "ff7b268f857195cde36a08564454d5cc3c3462aa";
-      v80R5CoyoteRevision = "c6aeb63e29e4ef63661bfce402999572b5916fbc";
+      v80R5QshellRevision = "9e591eedc6f5acc531b3b98c095744c803d28244";
+      v80R5CoyoteRevision = "8314f9183be8d22ab66920c3b2d6eca70bfea425";
       v80R5CoyoteNixRevision = "1e944ded10f210059c30244467e892b80c9c3cae";
       mkVerilator_5_014 =
         pkgs:

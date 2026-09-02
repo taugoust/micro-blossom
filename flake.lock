@@ -3,17 +3,17 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1788361227,
-        "narHash": "sha256-F2NpIr1+n63Imi6Yu08Q3+Z9+TZoUH0cdXiZDZk8T0Y=",
+        "lastModified": 1788362058,
+        "narHash": "sha256-8ukMnaXG/BOftUnYP/xyrNvKBYB2fVn9k413U7K18WU=",
         "ref": "debug-hub-strobe-width",
-        "rev": "c6aeb63e29e4ef63661bfce402999572b5916fbc",
-        "revCount": 832,
+        "rev": "8314f9183be8d22ab66920c3b2d6eca70bfea425",
+        "revCount": 833,
         "type": "git",
         "url": "ssh://git@github.com/taugoust/Coyote.git"
       },
       "original": {
         "ref": "debug-hub-strobe-width",
-        "rev": "c6aeb63e29e4ef63661bfce402999572b5916fbc",
+        "rev": "8314f9183be8d22ab66920c3b2d6eca70bfea425",
         "type": "git",
         "url": "ssh://git@github.com/taugoust/Coyote.git"
       }
@@ -52,17 +52,17 @@
     "coyote_2": {
       "flake": false,
       "locked": {
-        "lastModified": 1788361227,
-        "narHash": "sha256-F2NpIr1+n63Imi6Yu08Q3+Z9+TZoUH0cdXiZDZk8T0Y=",
+        "lastModified": 1788362058,
+        "narHash": "sha256-8ukMnaXG/BOftUnYP/xyrNvKBYB2fVn9k413U7K18WU=",
         "ref": "debug-hub-strobe-width",
-        "rev": "c6aeb63e29e4ef63661bfce402999572b5916fbc",
-        "revCount": 832,
+        "rev": "8314f9183be8d22ab66920c3b2d6eca70bfea425",
+        "revCount": 833,
         "type": "git",
         "url": "ssh://git@github.com/taugoust/Coyote.git"
       },
       "original": {
         "ref": "debug-hub-strobe-width",
-        "rev": "c6aeb63e29e4ef63661bfce402999572b5916fbc",
+        "rev": "8314f9183be8d22ab66920c3b2d6eca70bfea425",
         "type": "git",
         "url": "ssh://git@github.com/taugoust/Coyote.git"
       }
@@ -793,17 +793,17 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1788361421,
-        "narHash": "sha256-EBYqg8tul0uLOR0vxSk9afHzFQHNRtk8W/+9ZGoMb+4=",
+        "lastModified": 1788362164,
+        "narHash": "sha256-zNH2w+C3b66TRJMk3ciYv4dAuME77scVaYk1PO6VQsM=",
         "ref": "reusable-shell-build-repair",
-        "rev": "ff7b268f857195cde36a08564454d5cc3c3462aa",
-        "revCount": 130,
+        "rev": "9e591eedc6f5acc531b3b98c095744c803d28244",
+        "revCount": 131,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
         "ref": "reusable-shell-build-repair",
-        "rev": "ff7b268f857195cde36a08564454d5cc3c3462aa",
+        "rev": "9e591eedc6f5acc531b3b98c095744c803d28244",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }
