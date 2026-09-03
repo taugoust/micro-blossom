@@ -1430,6 +1430,7 @@
           verilator_5_014 = mkVerilator_5_014 pkgs;
           host = self.packages.${system}.microblossom-host;
           fixture = self.packages.${system}.microblossom-d3-graph;
+          circuitD9Fixture = self.packages.${system}.microblossom-circuit-level-d9-graph;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
@@ -1470,6 +1471,30 @@
         in
         {
           formatting = (treefmtEval system).config.build.check self;
+          max-growable-reduction =
+            pkgs.runCommand "microblossom-max-growable-reduction-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.jdk11
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                set -o pipefail
+                mkdir -p "$out" "$TMPDIR/home"
+                export HOME="$TMPDIR/home"
+                export MICROBLOSSOM_CIRCUIT_D9_GRAPH=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1/graph.json
+                cd "$TMPDIR"
+                timeout 600 java -Xmx4G \
+                  -cp ${scala}/share/java/microblossom.jar \
+                  org.scalatest.tools.Runner \
+                  -oD -s microblossom.modules.MaxGrowableReductionTest \
+                  | tee "$out/test.log"
+                grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+              '';
           graph-matrix-contract =
             assert builtins.length graphSpecs == 34;
             assert builtins.length (lib.unique (map (spec: spec.id) graphSpecs)) == 34;

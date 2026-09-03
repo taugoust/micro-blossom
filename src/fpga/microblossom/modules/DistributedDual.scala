@@ -15,6 +15,34 @@ import scala.util.control.Breaks._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable.Map
 
+object DistributedDual {
+  private[modules] def maxGrowableLeafIndicesInOrder(tree: BinaryTree): IndexedSeq[Int] = {
+    require(tree.nodes.nonEmpty)
+    val leaves = ArrayBuffer[Int]()
+
+    def visit(nodeIndex: Int): Unit = {
+      val node = tree.nodes(nodeIndex)
+      (node.l, node.r) match {
+        case (None, None) => leaves.append(nodeIndex)
+        case (Some(left), Some(right)) =>
+          visit(left.toInt)
+          visit(right.toInt)
+        case _ => throw new IllegalArgumentException("binary tree node must have either zero or two children")
+      }
+    }
+
+    visit(tree.nodes.length - 1)
+    leaves.toIndexedSeq
+  }
+
+  private[modules] def reduceMaxGrowable[T <: Data](candidates: Seq[T])(lengthOf: T => UInt): T = {
+    require(candidates.nonEmpty)
+    candidates.reduceBalancedTree { (left, right) =>
+      Mux(lengthOf(left) < lengthOf(right), left, right)
+    }
+  }
+}
+
 case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Component {
   ioConfig.contextDepth = config.contextDepth
 
@@ -87,29 +115,15 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
     offloader.io.edgeInputOffloadGet3 := edges(edgeIndex).io.stageOutputs.offloadGet3
   }
 
-  // build convergecast tree for maxGrowable
-  val maxGrowableConvergcastTree =
-    Vec.fill(config.graph.vertex_edge_binary_tree.nodes.length)(ConvergecastMaxGrowable(config.weightBits))
-  for ((treeNode, index) <- config.graph.vertex_edge_binary_tree.nodes.zipWithIndex) {
-    if (index < config.vertexNum) {
-      val vertexIndex = index
-      maxGrowableConvergcastTree(index) := vertices(vertexIndex).io.maxGrowable
-    } else if (index < config.vertexNum + config.edgeNum) {
-      val edgeIndex = index - config.vertexNum
-      maxGrowableConvergcastTree(index) := edges(edgeIndex).io.maxGrowable
-    } else {
-      val left = maxGrowableConvergcastTree(treeNode.l.get.toInt)
-      val right = maxGrowableConvergcastTree(treeNode.r.get.toInt)
-      when(left.length < right.length) {
-        maxGrowableConvergcastTree(index) := left
-      } otherwise {
-        maxGrowableConvergcastTree(index) := right
-      }
-    }
-  }
-
-  val selectedMaxGrowable =
-    Delay(maxGrowableConvergcastTree(config.graph.vertex_edge_binary_tree.nodes.length - 1), config.convergecastDelay)
+  // Preserve the graph tree's leaf order while balancing the max-growable reduction.
+  val maxGrowableCandidates = vertices.map(_.io.maxGrowable) ++ edges.map(_.io.maxGrowable)
+  val maxGrowableInOrder = DistributedDual
+    .maxGrowableLeafIndicesInOrder(config.graph.vertex_edge_binary_tree)
+    .map(index => maxGrowableCandidates(index))
+  val selectedMaxGrowable = Delay(
+    DistributedDual.reduceMaxGrowable(maxGrowableInOrder)(_.length),
+    config.convergecastDelay
+  )
   io.maxGrowable.resizedFrom(selectedMaxGrowable)
 
   // build convergecast tree of conflict
@@ -345,6 +359,121 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
       }
     }
     preMatchings
+  }
+}
+
+private[modules] case class TaggedMaxGrowable(weightBits: Int, sourceBits: Int) extends Bundle {
+  val length = UInt(weightBits bits)
+  val source = UInt(sourceBits bits)
+}
+
+private[modules] case class MaxGrowableReductionHarness(candidateCount: Int, weightBits: Int) extends Component {
+  private val sourceBits = log2Up(candidateCount)
+
+  val io = new Bundle {
+    val lengths = in(Vec.fill(candidateCount)(UInt(weightBits bits)))
+    val selectedLength = out(UInt(weightBits bits))
+    val selectedSource = out(UInt(sourceBits bits))
+  }
+
+  val candidates = io.lengths.zipWithIndex.map { case (length, index) =>
+    val candidate = TaggedMaxGrowable(weightBits, sourceBits)
+    candidate.length := length
+    candidate.source := U(index, sourceBits bits)
+    candidate
+  }
+  val selected = DistributedDual.reduceMaxGrowable(candidates)(_.length)
+  io.selectedLength := selected.length
+  io.selectedSource := selected.source
+}
+
+class MaxGrowableReductionTest extends AnyFunSuite {
+  private case class ModelCandidate(length: Int, source: Int)
+
+  private val candidateCount = 49
+  private val weightBits = 8
+  private lazy val compiledReduction = SimConfig
+    .withConfig(Config.spinal())
+    .workspaceName("max-growable-reduction")
+    .allOptimisation
+    .compile(MaxGrowableReductionHarness(candidateCount, weightBits))
+
+  private def select(left: ModelCandidate, right: ModelCandidate): ModelCandidate = {
+    if (left.length < right.length) left else right
+  }
+
+  private def expected(values: IndexedSeq[Int]): ModelCandidate = {
+    values.indices
+      .map(index => ModelCandidate(values(index), index))
+      .reduceLeft(select)
+  }
+
+  private def legacyTreeReduce(tree: BinaryTree, values: IndexedSeq[Int], nodeIndex: Int): ModelCandidate = {
+    val node = tree.nodes(nodeIndex)
+    (node.l, node.r) match {
+      case (None, None) => ModelCandidate(values(nodeIndex), nodeIndex)
+      case (Some(left), Some(right)) =>
+        select(
+          legacyTreeReduce(tree, values, left.toInt),
+          legacyTreeReduce(tree, values, right.toInt)
+        )
+      case _ => fail("binary tree node must have either zero or two children")
+    }
+  }
+
+  test("balanced RTL reduction matches the in-order fold") {
+    compiledReduction.doSim("randomized") { dut =>
+      val random = new scala.util.Random(0x5eedc0deL)
+      for (_ <- 0 until 4096) {
+        val values = IndexedSeq.fill(candidateCount)(random.nextInt(1 << weightBits))
+        values.zipWithIndex.foreach { case (value, index) => dut.io.lengths(index) #= value }
+        sleep(1)
+
+        val reference = expected(values)
+        assert(dut.io.selectedLength.toInt == reference.length)
+        assert(dut.io.selectedSource.toInt == reference.source)
+      }
+    }
+  }
+
+  test("balanced RTL reduction selects the rightmost equal candidate") {
+    compiledReduction.doSim("ties") { dut =>
+      def check(values: IndexedSeq[Int], expectedSource: Int): Unit = {
+        values.zipWithIndex.foreach { case (value, index) => dut.io.lengths(index) #= value }
+        sleep(1)
+        assert(dut.io.selectedLength.toInt == values(expectedSource))
+        assert(dut.io.selectedSource.toInt == expectedSource)
+      }
+
+      check(IndexedSeq.fill(candidateCount)(7), candidateCount - 1)
+      check(IndexedSeq.tabulate(candidateCount)(index => if (Set(0, 17, 48).contains(index)) 1 else 9), 48)
+      check(IndexedSeq.tabulate(candidateCount)(index => if (Set(7, 31, 47).contains(index)) 2 else 10), 47)
+      check(IndexedSeq.tabulate(candidateCount)(index => if (index == 0) 0 else 11), 0)
+    }
+  }
+
+  test("balanced circuit d9 sequence matches the original tree") {
+    val graphPath = sys.env.getOrElse(
+      "MICROBLOSSOM_CIRCUIT_D9_GRAPH",
+      fail("MICROBLOSSOM_CIRCUIT_D9_GRAPH must name the circuit-level d9 graph")
+    )
+    val config = DualConfig(filename = graphPath)
+    val tree = config.graph.vertex_edge_binary_tree
+    val inOrder = DistributedDual.maxGrowableLeafIndicesInOrder(tree)
+    val leafCount = config.vertexNum + config.edgeNum
+    assert(inOrder.length == leafCount)
+    assert(inOrder.distinct.length == leafCount)
+
+    val allEqual = IndexedSeq.fill(leafCount)(3)
+    assert(legacyTreeReduce(tree, allEqual, tree.nodes.length - 1).source == inOrder.last)
+
+    val random = new scala.util.Random(0x1cedc0deL)
+    for (_ <- 0 until 512) {
+      val values = IndexedSeq.fill(leafCount)(random.nextInt(16))
+      val legacy = legacyTreeReduce(tree, values, tree.nodes.length - 1)
+      val balanced = inOrder.iterator.map(index => ModelCandidate(values(index), index)).reduceLeft(select)
+      assert(balanced == legacy)
+    }
   }
 }
 
