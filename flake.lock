@@ -32,17 +32,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788458384,
-        "narHash": "sha256-0GsLPrFrVrHjX74NPlkwRc9PEwR88vWPodKZk5hb3TE=",
+        "lastModified": 1788463671,
+        "narHash": "sha256-Ae9qQszwHkoHMCsILGti7CgUNmmmPvh/n5l1fC3mlM4=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "223b72997585e66e6a3bcc208236cb02f653338e",
+        "rev": "a078a7ec10d2874f173f506719b0d5787f9c6e61",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "223b72997585e66e6a3bcc208236cb02f653338e",
+        "rev": "a078a7ec10d2874f173f506719b0d5787f9c6e61",
         "type": "github"
       }
     },

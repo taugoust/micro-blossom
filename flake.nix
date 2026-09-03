@@ -15,7 +15,7 @@
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
     coyote.follows = "qshell/coyote";
     coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/223b72997585e66e6a3bcc208236cb02f653338e";
+      url = "github:TUM-DSE/coyote-nix/a078a7ec10d2874f173f506719b0d5787f9c6e61";
       inputs.coyote.follows = "coyote";
       inputs.flake-utils.follows = "qshell/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -1765,7 +1765,7 @@
               '';
           circuit-d9-u280-validated-static-graph =
             assert coyote.rev == v80R5CoyoteRevision;
-            assert coyoteNix.rev == "223b72997585e66e6a3bcc208236cb02f653338e";
+            assert coyoteNix.rev == "a078a7ec10d2874f173f506719b0d5787f9c6e61";
             assert
               flakeLock.nodes.root.inputs.coyote == [
                 "qshell"
@@ -2205,7 +2205,7 @@
             assert qshell.rev == v80R5QshellRevision;
             assert coyote.rev == v80R5CoyoteRevision;
             assert qshell.inputs."coyote-nix".rev == v80R5CoyoteNixRevision;
-            assert coyoteNix.rev == "223b72997585e66e6a3bcc208236cb02f653338e";
+            assert coyoteNix.rev == "a078a7ec10d2874f173f506719b0d5787f9c6e61";
             assert qshellLib.applicationContract.recordAbi == qshellAbiSpec.version;
             assert qshellLib.applicationContract.controlAbi == "qshell-control";
             assert qshellLib.applicationContract.coyoteExternalServiceInterface == 1;
