@@ -834,10 +834,10 @@
                   --max-growable-pipeline-latency ${toString timing.maxGrowablePipelineLatency} \
                   --context-depth 1 \
                   --conflict-channels 1 \
+                  --clock-divide-by 2 \
                   ${lib.optionalString (
                     timing.injectedRegisters != [ ]
-                  ) "--inject-registers ${lib.escapeShellArgs timing.injectedRegisters} \\"}
-                  --clock-divide-by 2
+                  ) "--inject-registers ${lib.escapeShellArgs timing.injectedRegisters}"}
 
                 test -s "$TMPDIR/generated/MicroBlossomBus.v"
                 rtl="$out/share/microblossom/rtl/${spec.id}-v1"
