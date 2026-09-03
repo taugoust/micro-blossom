@@ -1430,7 +1430,10 @@
           verilator_5_014 = mkVerilator_5_014 pkgs;
           host = self.packages.${system}.microblossom-host;
           fixture = self.packages.${system}.microblossom-d3-graph;
+          circuitD3Fixture = self.packages.${system}.microblossom-circuit-level-d3-graph;
           circuitD9Fixture = self.packages.${system}.microblossom-circuit-level-d9-graph;
+          circuitD3Rtl = self.packages.${system}.microblossom-circuit-level-d3-rtl;
+          circuitD9Rtl = self.packages.${system}.microblossom-circuit-level-d9-rtl;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
@@ -1493,6 +1496,36 @@
                   -oD -s microblossom.modules.MaxGrowableReductionTest \
                   | tee "$out/test.log"
                 grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+              '';
+          distributed-control-fanout-test =
+            pkgs.runCommand "microblossom-distributed-control-fanout-test"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.jdk11
+                  pkgs.python3
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                set -o pipefail
+                mkdir -p "$out" "$TMPDIR/home"
+                export HOME="$TMPDIR/home"
+                export MICROBLOSSOM_CIRCUIT_D3_GRAPH=${circuitD3Fixture}/share/microblossom/fixtures/circuit-level-d3-v1/graph.json
+                export MICROBLOSSOM_CIRCUIT_D9_GRAPH=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1/graph.json
+                cd "$TMPDIR"
+                timeout 600 java -Xmx4G \
+                  -cp ${scala}/share/java/microblossom.jar \
+                  org.scalatest.tools.Runner \
+                  -oD -s microblossom.modules.DistributedDualControlFanoutTest \
+                  | tee "$out/test.log"
+                grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                python3 ${./nix/check-distributed-control-fanout.py} \
+                  --d3 ${circuitD3Rtl}/share/microblossom/rtl/circuit-level-d3-v1/MicroBlossomBus.v \
+                  --d9 ${circuitD9Rtl}/share/microblossom/rtl/circuit-level-d9-v1/MicroBlossomBus.v \
+                  | tee "$out/generated-topology.log"
                 verilator --version > "$out/verilator-version.txt"
               '';
           graph-matrix-contract =
