@@ -12,11 +12,27 @@ module microblossom_qshell_clock_div2 (
     output logic slow_aresetn
 );
 
-`ifdef MICROBLOSSOM_SIM_CLOCK_DIVIDER
-logic slow_clk_sim;
+// BUFGCE_DIV CLR asserts asynchronously, but its release must be synchronized
+// to the input clock. Keep this reset separate from the accelerator's local
+// fast-domain reset because it controls clock generation.
+(* ASYNC_REG = "TRUE" *) logic [1:0] divider_reset_sync;
+logic divider_clear;
 
 always_ff @(posedge aclk or negedge aresetn) begin
     if (!aresetn) begin
+        divider_reset_sync <= 2'b00;
+    end else begin
+        divider_reset_sync <= {divider_reset_sync[0], 1'b1};
+    end
+end
+
+assign divider_clear = !divider_reset_sync[1];
+
+`ifdef MICROBLOSSOM_SIM_CLOCK_DIVIDER
+logic slow_clk_sim;
+
+always_ff @(posedge aclk or posedge divider_clear) begin
+    if (divider_clear) begin
         slow_clk_sim <= 1'b0;
     end else begin
         slow_clk_sim <= ~slow_clk_sim;
@@ -35,7 +51,7 @@ BUFGCE_DIV #(
 ) inst_slow_clock_buffer (
     .I(aclk),
     .CE(1'b1),
-    .CLR(!aresetn),
+    .CLR(divider_clear),
     .O(slow_clk)
 );
 `endif
