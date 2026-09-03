@@ -1543,6 +1543,8 @@
                 nativeBuildInputs = [
                   pkgs.gnumake
                   pkgs.jdk11
+                  pkgs.python3
+                  pkgs.scala_2_12
                   pkgs.stdenv.cc
                   pkgs.zlib
                   verilator_5_014
@@ -1550,31 +1552,58 @@
               }
               ''
                 set -o pipefail
-                mkdir -p "$out" "$TMPDIR/home" "$TMPDIR/resources/graphs"
+                mkdir -p "$out" "$TMPDIR/classes" "$TMPDIR/home" "$TMPDIR/workspace"
                 export HOME="$TMPDIR/home"
-                cp ${fixture}/share/microblossom/fixtures/code-capacity-repetition-d3-v1/graph.json \
-                  "$TMPDIR/resources/graphs/example_code_capacity_d3.json"
+                export MICROBLOSSOM_CIRCUIT_D9_GRAPH=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1/graph.json
+                export MICROBLOSSOM_STAGE_PIPELINE_WORKSPACE="$TMPDIR/workspace"
+                scalac -J-Xmx4G \
+                  -classpath ${scala}/share/java/microblossom.jar \
+                  -d "$TMPDIR/classes" \
+                  ${./nix/tests/CircuitD9StagePipelineRegression.scala}
                 cd "$TMPDIR"
-                timeout 900 java -Xmx4G \
-                  -cp ${scala}/share/java/microblossom.jar \
-                  org.scalatest.tools.Runner \
-                  -oD -s microblossom.modules.DistributedDualTest \
+                timeout 2400 java -Xmx16G \
+                  -cp "$TMPDIR/classes:${scala}/share/java/microblossom.jar" \
+                  microblossom.regression.CircuitD9StagePipelineRegression \
                   | tee "$out/test.log"
-                grep -F 'three balanced stage registers preserve directed execution' \
+                grep -F 'CIRCUIT_D9_STAGE_PIPELINE_OK directed=1 random=12 offloaders=1737 burst=32 executeLatency=3 readLatency=4' \
                   "$out/test.log" >/dev/null
-                grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                candidate_rtl="$(find "$TMPDIR/workspace/pipelined/rtl" -name DistributedDual.v -print -quit)"
+                test -n "$candidate_rtl"
+                python3 ${./nix/tests/assert-circuit-d9-stage-registers.py} \
+                  --expect-active-offloaders "$candidate_rtl" \
+                  | tee "$out/active-stage-registers.log"
                 verilator --version > "$out/verilator-version.txt"
               '';
           stage-pipeline-contract =
             pkgs.runCommand "microblossom-circuit-d9-stage-pipeline-contract"
-              { nativeBuildInputs = [ pkgs.jq ]; }
+              {
+                nativeBuildInputs = [
+                  pkgs.jq
+                  pkgs.python3
+                ];
+              }
               ''
+                fixture=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1
                 rtl=${circuitD9Rtl}/share/microblossom/rtl/circuit-level-d9-v1
                 core=${circuitD9Core}/share/microblossom/qshell-core/circuit-level-d9-v1
+                expected_graph_sha256='9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a'
+                expected_generator_jar_sha256='2f76294892587c801a7ba8ab9cae7db477250cfb10b7150145311a1586b9fa45'
+                expected_qshell_abi_sha256='bd2d33ef674846005f6db52d6b166fc1f8ddd045972f3bf04e6f58908f6934ba'
+
+                test "$(sha256sum "$fixture/graph.json" | cut -d' ' -f1)" = \
+                  "$expected_graph_sha256"
+                test "$(jq -er '.generated.graphSha256' "$fixture/manifest.json")" = \
+                  "$expected_graph_sha256"
+                test "$(sha256sum ${scala}/share/java/microblossom.jar | cut -d' ' -f1)" = \
+                  "$expected_generator_jar_sha256"
+                test "$(jq -er '.generatorJarSha256' "$rtl/rtl-manifest.json")" = \
+                  "$expected_generator_jar_sha256"
+                test "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" = \
+                  "$expected_qshell_abi_sha256"
                 test "$(sha256sum "$rtl/MicroBlossomBus.v" | cut -d' ' -f1)" = \
                   "$(jq -er '.rtlSha256' "$rtl/rtl-manifest.json")"
                 test "$(jq -er '.graphSha256' "$rtl/rtl-manifest.json")" = \
-                  '9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a'
+                  "$expected_graph_sha256"
                 jq -e '
                   .timing == {
                     "broadcastDelay": 0,
@@ -1594,6 +1623,9 @@
                 test "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")" = \
                   "$(jq -er '.rtlSha256' "$rtl/rtl-manifest.json")"
                 mkdir -p "$out"
+                python3 ${./nix/tests/assert-circuit-d9-stage-registers.py} \
+                  "$rtl/MicroBlossomBus.v" \
+                  | tee "$out/stage-registers.log"
                 cp "$rtl/rtl-manifest.json" "$out/rtl-manifest.json"
                 cp "$core/core-manifest.json" "$out/core-manifest.json"
               '';
