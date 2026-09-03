@@ -35,9 +35,24 @@ object DistributedDual {
     leaves.toIndexedSeq
   }
 
-  private[modules] def reduceMaxGrowable[T <: Data](candidates: Seq[T])(lengthOf: T => UInt): T = {
+  private[modules] def reduceHalfSplit[T](candidates: IndexedSeq[T])(combine: (T, T) => T): T = {
     require(candidates.nonEmpty)
-    candidates.reduceBalancedTree { (left, right) =>
+
+    def reduceRange(from: Int, until: Int): T = {
+      val count = until - from
+      if (count == 1) {
+        candidates(from)
+      } else {
+        val middle = from + count / 2
+        combine(reduceRange(from, middle), reduceRange(middle, until))
+      }
+    }
+
+    reduceRange(0, candidates.length)
+  }
+
+  private[modules] def reduceMaxGrowable[T <: Data](candidates: IndexedSeq[T])(lengthOf: T => UInt): T = {
+    reduceHalfSplit(candidates) { (left, right) =>
       Mux(lengthOf(left) < lengthOf(right), left, right)
     }
   }
@@ -115,7 +130,7 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
     offloader.io.edgeInputOffloadGet3 := edges(edgeIndex).io.stageOutputs.offloadGet3
   }
 
-  // Preserve the graph tree's leaf order while balancing the max-growable reduction.
+  // Preserve the graph tree's leaf order and recursively half-split contiguous candidate ranges.
   val maxGrowableCandidates = vertices.map(_.io.maxGrowable) ++ edges.map(_.io.maxGrowable)
   val maxGrowableInOrder = DistributedDual
     .maxGrowableLeafIndicesInOrder(config.graph.vertex_edge_binary_tree)
@@ -382,7 +397,7 @@ private[modules] case class MaxGrowableReductionHarness(candidateCount: Int, wei
     candidate.source := U(index, sourceBits bits)
     candidate
   }
-  val selected = DistributedDual.reduceMaxGrowable(candidates)(_.length)
+  val selected = DistributedDual.reduceMaxGrowable(candidates.toIndexedSeq)(_.length)
   io.selectedLength := selected.length
   io.selectedSource := selected.source
 }
@@ -408,6 +423,23 @@ class MaxGrowableReductionTest extends AnyFunSuite {
       .reduceLeft(select)
   }
 
+  private def halfSplitDepths(candidateCount: Int): IndexedSeq[Int] = {
+    val leaves = IndexedSeq.fill(candidateCount)(IndexedSeq(0))
+    DistributedDual.reduceHalfSplit(leaves) { (left, right) =>
+      left.map(_ + 1) ++ right.map(_ + 1)
+    }
+  }
+
+  private def sequenceSha256(indices: IndexedSeq[Int]): String = {
+    val bytes = indices.mkString(",").getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    java.security.MessageDigest
+      .getInstance("SHA-256")
+      .digest(bytes)
+      .iterator
+      .map(byte => f"${byte.toInt & 0xff}%02x")
+      .mkString
+  }
+
   private def legacyTreeReduce(tree: BinaryTree, values: IndexedSeq[Int], nodeIndex: Int): ModelCandidate = {
     val node = tree.nodes(nodeIndex)
     (node.l, node.r) match {
@@ -421,7 +453,7 @@ class MaxGrowableReductionTest extends AnyFunSuite {
     }
   }
 
-  test("balanced RTL reduction matches the in-order fold") {
+  test("half-split RTL reduction matches the in-order fold") {
     compiledReduction.doSim("randomized") { dut =>
       val random = new scala.util.Random(0x5eedc0deL)
       for (_ <- 0 until 4096) {
@@ -436,7 +468,7 @@ class MaxGrowableReductionTest extends AnyFunSuite {
     }
   }
 
-  test("balanced RTL reduction selects the rightmost equal candidate") {
+  test("half-split RTL reduction selects the rightmost equal candidate") {
     compiledReduction.doSim("ties") { dut =>
       def check(values: IndexedSeq[Int], expectedSource: Int): Unit = {
         values.zipWithIndex.foreach { case (value, index) => dut.io.lengths(index) #= value }
@@ -452,7 +484,7 @@ class MaxGrowableReductionTest extends AnyFunSuite {
     }
   }
 
-  test("balanced circuit d9 sequence matches the original tree") {
+  test("half-split circuit d9 shape and result match the original tree") {
     val graphPath = sys.env.getOrElse(
       "MICROBLOSSOM_CIRCUIT_D9_GRAPH",
       fail("MICROBLOSSOM_CIRCUIT_D9_GRAPH must name the circuit-level d9 graph")
@@ -461,18 +493,30 @@ class MaxGrowableReductionTest extends AnyFunSuite {
     val tree = config.graph.vertex_edge_binary_tree
     val inOrder = DistributedDual.maxGrowableLeafIndicesInOrder(tree)
     val leafCount = config.vertexNum + config.edgeNum
+    assert(leafCount == 2170)
     assert(inOrder.length == leafCount)
     assert(inOrder.distinct.length == leafCount)
+    assert(inOrder.sorted.sameElements(0 until leafCount))
+    assert(sequenceSha256(inOrder) == "0ca42de9b0c1fe6ae778daa6edb94b7fc02dd5cf503eb5a9a5b01285d2963a3f")
+
+    val depths = halfSplitDepths(leafCount)
+    assert(depths.length == leafCount)
+    assert(depths.count(_ == 11) == 1926)
+    assert(depths.count(_ == 12) == 244)
+    assert(depths.forall(depth => depth == 11 || depth == 12))
 
     val allEqual = IndexedSeq.fill(leafCount)(3)
+    val allEqualInOrder = inOrder.map(index => ModelCandidate(allEqual(index), index))
     assert(legacyTreeReduce(tree, allEqual, tree.nodes.length - 1).source == inOrder.last)
+    assert(DistributedDual.reduceHalfSplit(allEqualInOrder)(select).source == inOrder.last)
 
     val random = new scala.util.Random(0x1cedc0deL)
     for (_ <- 0 until 512) {
       val values = IndexedSeq.fill(leafCount)(random.nextInt(16))
       val legacy = legacyTreeReduce(tree, values, tree.nodes.length - 1)
-      val balanced = inOrder.iterator.map(index => ModelCandidate(values(index), index)).reduceLeft(select)
-      assert(balanced == legacy)
+      val candidates = inOrder.map(index => ModelCandidate(values(index), index))
+      val halfSplit = DistributedDual.reduceHalfSplit(candidates)(select)
+      assert(halfSplit == legacy)
     }
   }
 }
