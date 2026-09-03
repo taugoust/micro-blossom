@@ -7,6 +7,15 @@ import collection.mutable.ArrayBuffer
 import org.scalatest.funsuite.AnyFunSuite
 
 object DualConfig {
+  val DistributedControlMaxFanout = 32
+
+  def distributedControlDepth(consumerCount: Int): Int = {
+    require(consumerCount > 0)
+    Iterator
+      .iterate(consumerCount)(count => (count + DistributedControlMaxFanout - 1) / DistributedControlMaxFanout)
+      .indexWhere(_ <= DistributedControlMaxFanout)
+  }
+
   def version = Integer.parseInt("24" + "01" + "23" + "c0", 16) // year - month - date - 'c'revision
 }
 
@@ -45,6 +54,9 @@ case class DualConfig(
   def IndexNone = (1 << vertexBits) - 1
   def LengthNone = (1 << weightBits) - 1
   def supportContextSwitching = contextBits > 0
+  def distributedControlConsumerCount = vertexNum + edgeNum + offloaderNum
+  def distributedControlLatency = DualConfig.distributedControlDepth(distributedControlConsumerCount)
+  def broadcastLatency = broadcastDelay + distributedControlLatency
   def executeLatency = { // from sending the command to the time it's safe to write to the same context again
     // when context switching, 2 cycles delay due to memory fetch and write
     val contextDelay = 2 * (contextDepth != 1).toInt
@@ -52,7 +64,7 @@ case class DualConfig(
   }
   def initiationInterval = 1
   def readLatency = { // from sending the command to receiving the obstacle
-    broadcastDelay + executeLatency + maxGrowablePipelineLatency + convergecastDelay
+    broadcastLatency + executeLatency + maxGrowablePipelineLatency + convergecastDelay
   }
   def layerFusion = {
     graph.layer_fusion match {

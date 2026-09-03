@@ -715,19 +715,40 @@
                 "execute2"
                 "update"
               ];
+              distributedControlMaxFanout = 32;
+              distributedControlConsumerCount = spec.vertexNum + spec.edgeNum;
+              distributedControlLatency =
+                let
+                  depth =
+                    consumerCount:
+                    if consumerCount <= distributedControlMaxFanout then
+                      0
+                    else
+                      1
+                      + depth (
+                        builtins.div (consumerCount + distributedControlMaxFanout - 1) distributedControlMaxFanout
+                      );
+                in
+                depth distributedControlConsumerCount;
+              broadcastDelay = 0;
+              broadcastLatency = broadcastDelay + distributedControlLatency;
               maxGrowablePipelineLatency = if isCircuitD9 then 2 else 0;
               executeLatency = builtins.length injectedRegisters;
               convergecastDelay = 1;
             in
             {
               inherit
+                broadcastDelay
+                broadcastLatency
                 convergecastDelay
+                distributedControlConsumerCount
+                distributedControlLatency
+                distributedControlMaxFanout
                 executeLatency
                 injectedRegisters
                 maxGrowablePipelineLatency
                 ;
-              broadcastDelay = 0;
-              readLatency = executeLatency + maxGrowablePipelineLatency + convergecastDelay;
+              readLatency = broadcastLatency + executeLatency + maxGrowablePipelineLatency + convergecastDelay;
               initiationInterval = 1;
               executionCutPayload = lib.optionals isCircuitD9 [
                 "state"
@@ -1562,21 +1583,29 @@
 
                 jq -e '
                   .timing.broadcastDelay == 0 and
+                  .timing.distributedControlConsumerCount == 58 and
+                  .timing.distributedControlMaxFanout == 32 and
+                  .timing.distributedControlLatency == 1 and
+                  .timing.broadcastLatency == 1 and
                   .timing.convergecastDelay == 1 and
                   .timing.injectedRegisters == [] and
                   .timing.executeLatency == 0 and
                   .timing.maxGrowablePipelineLatency == 0 and
-                  .timing.readLatency == 1 and
+                  .timing.readLatency == 2 and
                   .timing.initiationInterval == 1
                 ' "$d3/rtl-manifest.json" >/dev/null
                 jq -e '
                   .timing.broadcastDelay == 0 and
+                  .timing.distributedControlConsumerCount == 2170 and
+                  .timing.distributedControlMaxFanout == 32 and
+                  .timing.distributedControlLatency == 2 and
+                  .timing.broadcastLatency == 2 and
                   .timing.convergecastDelay == 1 and
                   .timing.injectedRegisters == ["execute2", "update"] and
                   .timing.executeLatency == 2 and
                   .timing.maxGrowablePipelineLatency == 2 and
                   .timing.maxGrowablePipelineFanIn == 16 and
-                  .timing.readLatency == 5 and
+                  .timing.readLatency == 7 and
                   .timing.initiationInterval == 1 and
                   .timing.executionCutPayload == [
                     "state", "compactCommand", "valid", "context", "stall", "propagation"
@@ -1634,6 +1663,36 @@
                 cp "$d3/rtl-manifest.json" "$out/circuit-d3-rtl-manifest.json"
                 cp "$d9/rtl-manifest.json" "$out/circuit-d9-rtl-manifest.json"
                 cp "$d9_core/core-manifest.json" "$out/circuit-d9-core-manifest.json"
+              '';
+          distributed-control-fanout-test =
+            pkgs.runCommand "microblossom-distributed-control-fanout-test"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.jdk11
+                  pkgs.python3
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                set -o pipefail
+                mkdir -p "$out" "$TMPDIR/home"
+                export HOME="$TMPDIR/home"
+                export MICROBLOSSOM_CIRCUIT_D3_GRAPH=${circuitD3Fixture}/share/microblossom/fixtures/circuit-level-d3-v1/graph.json
+                export MICROBLOSSOM_CIRCUIT_D9_GRAPH=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1/graph.json
+                cd "$TMPDIR"
+                timeout 600 java -Xmx4G \
+                  -cp ${scala}/share/java/microblossom.jar \
+                  org.scalatest.tools.Runner \
+                  -oD -s microblossom.modules.DistributedDualControlFanoutTest \
+                  | tee "$out/test.log"
+                grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                python3 ${./nix/check-distributed-control-fanout.py} \
+                  --d3 ${circuitD3Rtl}/share/microblossom/rtl/circuit-level-d3-v1/MicroBlossomBus.v \
+                  --d9 ${circuitD9Rtl}/share/microblossom/rtl/circuit-level-d9-v1/MicroBlossomBus.v \
+                  | tee "$out/generated-topology.log"
+                verilator --version > "$out/verilator-version.txt"
               '';
           graph-matrix-contract =
             assert builtins.length graphSpecs == 34;
