@@ -21,6 +21,34 @@
     "coyote-nix": {
       "inputs": {
         "coyote": [
+          "coyote"
+        ],
+        "flake-utils": [
+          "qshell",
+          "flake-utils"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788458384,
+        "narHash": "sha256-0GsLPrFrVrHjX74NPlkwRc9PEwR88vWPodKZk5hb3TE=",
+        "owner": "TUM-DSE",
+        "repo": "coyote-nix",
+        "rev": "223b72997585e66e6a3bcc208236cb02f653338e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "TUM-DSE",
+        "repo": "coyote-nix",
+        "rev": "223b72997585e66e6a3bcc208236cb02f653338e",
+        "type": "github"
+      }
+    },
+    "coyote-nix_2": {
+      "inputs": {
+        "coyote": [
           "qshell",
           "coyote"
         ],
@@ -47,24 +75,6 @@
         "rev": "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/coyote-nix.git"
-      }
-    },
-    "coyote_2": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1788366318,
-        "narHash": "sha256-ExJfvp12lzcdxCp3ZQXvj5vUYhIxrgljQDQv9ViyJCc=",
-        "ref": "debug-hub-checkpoint-abi",
-        "rev": "d0e293778b2e14c3b69c3e9e6295b10dabafe24e",
-        "revCount": 834,
-        "type": "git",
-        "url": "ssh://git@github.com/taugoust/Coyote.git"
-      },
-      "original": {
-        "ref": "debug-hub-checkpoint-abi",
-        "rev": "d0e293778b2e14c3b69c3e9e6295b10dabafe24e",
-        "type": "git",
-        "url": "ssh://git@github.com/taugoust/Coyote.git"
       }
     },
     "crane": {
@@ -784,8 +794,8 @@
     },
     "qshell": {
       "inputs": {
-        "coyote": "coyote_2",
-        "coyote-nix": "coyote-nix",
+        "coyote": "coyote",
+        "coyote-nix": "coyote-nix_2",
         "doctor-cluster-xilinx": "doctor-cluster-xilinx",
         "flake-utils": "flake-utils_2",
         "nixpkgs": "nixpkgs_3",
@@ -834,11 +844,11 @@
     },
     "root": {
       "inputs": {
-        "coyote": "coyote",
-        "coyote-nix": [
+        "coyote": [
           "qshell",
-          "coyote-nix"
+          "coyote"
         ],
+        "coyote-nix": "coyote-nix",
         "crane": "crane",
         "doctor-cluster-xilinx": [
           "qshell",

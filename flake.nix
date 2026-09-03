@@ -13,11 +13,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
-    coyote = {
-      url = "git+ssh://git@github.com/taugoust/Coyote.git?ref=debug-hub-checkpoint-abi&rev=d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
-      flake = false;
+    coyote.follows = "qshell/coyote";
+    coyote-nix = {
+      url = "github:TUM-DSE/coyote-nix/223b72997585e66e6a3bcc208236cb02f653338e";
+      inputs.coyote.follows = "coyote";
+      inputs.flake-utils.follows = "qshell/flake-utils";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
-    coyote-nix.follows = "qshell/coyote-nix";
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
   };
 
@@ -90,6 +92,13 @@
           qshellAbiSpec = builtins.fromJSON (builtins.readFile "${qshellContractSource}/abi/qshell-abi.json");
           qshellHostPackage = qshell.packages.${system}.qshell-host;
           qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
+          qshellU280StaticCheckpoint = {
+            stage = qshellU280Shell.coyoteTwoStage.physical.units.shell.validate;
+            manifestId = "10966f56fb54acc5f337df96a8ebb93567322bb3da57f77d4f94b337487eb99a";
+            checkpointSha256 = "3250e9153b2d52886d1def70101b286eea95e73bea33d1b3fecb139dd5549ffb";
+            coyoteSourceId = "06d94332001897aa79cf950e18f6fa98315c38d3c10fe41678f1f5e68fc902b0";
+            fixedRouteNets = 151901;
+          };
           qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-r5-shell;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
@@ -998,6 +1007,109 @@
             map (spec: lib.nameValuePair spec.id (mkGraphEntry spec)) graphSpecs
           );
 
+          circuitD9GraphEntry = graphMatrix."circuit-level-d9";
+          circuitD9QshellU280IntegratedPname = "microblossom-circuit-level-d9-qshell-u280-integrated-strict";
+          circuitD9QshellU280IntegratedAppCmakeFlags = [
+            "-DQSHELL_APPLICATION_SOURCE_DIRS:STRING=src/app/microblossom"
+            "-DEN_TIMING_CHECK:BOOL=ON"
+            "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1"
+          ];
+          circuitD9QshellU280IntegratedBoard = qshellLib.boards.u280 // {
+            platform = "u280";
+            coyotePlatform = "ultrascale";
+            staticSynthPname = "${circuitD9QshellU280IntegratedPname}-static-synth";
+            staticRoutedPname = "${circuitD9QshellU280IntegratedPname}-static-routed";
+            staticPname = "${circuitD9QshellU280IntegratedPname}-static";
+            synthPname = "${circuitD9QshellU280IntegratedPname}-synth";
+            routedPname = "${circuitD9QshellU280IntegratedPname}-routed";
+            finalPname = circuitD9QshellU280IntegratedPname;
+            staticCheckpoint = qshellU280StaticCheckpoint;
+            skipIntermediateRouteCheckpoints = true;
+            finalEnablePr = false;
+            staticCmakeFlags = [
+              "-DQSHELL_APPLICATION_SOURCE_DIRS:STRING=src/app/microblossom"
+            ];
+            appCmakeFlags = circuitD9QshellU280IntegratedAppCmakeFlags;
+          };
+          circuitD9QshellU280IntegratedHwSource =
+            pkgs.runCommand "${circuitD9QshellU280IntegratedPname}-hw-source" { }
+              ''
+                cp -R ${qshellLib.qshellShellHwSource}/. "$out"
+                chmod -R u+w "$out"
+                rm -rf "$out/src/app/service"
+                mkdir -p "$out/src/app/microblossom"
+                cp -R ${circuitD9GraphEntry.hwSource}/src/microblossom/. \
+                  "$out/src/app/microblossom/"
+                cp ${circuitD9GraphEntry.hwSource}/core-manifest.json "$out/"
+              '';
+          circuitD9QshellU280StageHelpers = import "${coyoteNix}/lib/coyoteHwStageHelpers.nix" {
+            inherit pkgs xilinxShareRoot;
+            tools = coyoteTools;
+            coyoteRoot = coyote;
+            hwSource = circuitD9QshellU280IntegratedHwSource;
+            xilinxShell = doctor.xilinxShell;
+            version = "0.1.0";
+          };
+          circuitD9QshellU280IntegratedSynth = circuitD9QshellU280StageHelpers.mkStage {
+            pname = circuitD9QshellU280IntegratedBoard.synthPname;
+            board = circuitD9QshellU280IntegratedBoard;
+            inherit (circuitD9QshellU280IntegratedBoard) xilinxVersion;
+            cmakeFlags = [
+              "-DBUILD_APP:STRING=0"
+              "-DBUILD_STATIC:STRING=0"
+              "-DBUILD_SHELL:STRING=1"
+            ]
+            ++ circuitD9QshellU280IntegratedAppCmakeFlags;
+            buildCommands = [
+              "make project"
+              "make synth"
+            ];
+            expectedPaths = [
+              "checkpoints/shell/shell_synthed.dcp"
+              "checkpoints/config_0/user_synthed_c0_0.dcp"
+            ];
+            extraInstallPhase = circuitD9QshellU280StageHelpers.installCheckpointReports {
+              checkpointDirs = [
+                "shell"
+                "config_0"
+              ];
+              reportDirs = [
+                "shell"
+                "config_0"
+              ];
+            };
+            description = "Coyote u280 shell synthesis stage";
+          };
+          circuitD9QshellU280IntegratedPackages = coyoteNix.lib.mkCoyoteBoardPackages {
+            inherit pkgs xilinxShareRoot;
+            tools = coyoteTools;
+            coyoteRoot = coyote;
+            xilinxShell = doctor.xilinxShell;
+            hwSource = circuitD9QshellU280IntegratedHwSource;
+            pnamePrefix = circuitD9QshellU280IntegratedPname;
+            projectName = "qshell-fpga";
+            version = "0.1.0";
+            boards.u280 = circuitD9QshellU280IntegratedBoard;
+          };
+          circuitD9QshellU280IntegratedStatic =
+            circuitD9QshellU280IntegratedPackages."${circuitD9QshellU280IntegratedPname}-static";
+          circuitD9QshellU280IntegratedRaw =
+            circuitD9QshellU280IntegratedPackages.${circuitD9QshellU280IntegratedPname};
+          circuitD9QshellU280Integrated = circuitD9QshellU280IntegratedRaw.overrideAttrs (oldAttrs: {
+            passthru = (oldAttrs.passthru or { }) // {
+              microblossomValidatedStaticGraph = {
+                acceleratorSourceBaseRevision = "8381b4e74e6734c508a031f00f37cad96e743cbc";
+                graphSha256 = circuitD9GraphEntry.spec.graphSha256;
+                acceleratorTiming = graphTiming circuitD9GraphEntry.spec;
+                importedStatic = circuitD9QshellU280IntegratedStatic.coyoteStaticCheckpoint;
+                stages = {
+                  static = circuitD9QshellU280IntegratedStatic;
+                  synth = circuitD9QshellU280IntegratedSynth;
+                };
+              };
+            };
+          });
+
           graphMatrixPackages = lib.foldl' (
             packages: entry:
             let
@@ -1450,6 +1562,9 @@
           microblossom-d3-v80-r5-app-routed = d3QshellCoprocessorApp.coyoteTwoStage.stages.routed;
           microblossom-d3-v80-r5-firmware = r5ServiceFirmware;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
+          microblossom-circuit-level-d9-qshell-u280-integrated-strict = circuitD9QshellU280Integrated;
+          microblossom-circuit-level-d9-qshell-u280-integrated-strict-synth =
+            circuitD9QshellU280IntegratedSynth;
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-coprocessor-app-synth =
             d3QshellCoprocessorApp.coyoteTwoStage.stages.synth;
@@ -1519,6 +1634,19 @@
           graphOutputsPresent = lib.all (
             name: builtins.hasAttr name self.packages.${system}
           ) graphOutputNames;
+          circuitD9U280Integrated =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-strict;
+          circuitD9U280IntegratedSynth =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-strict-synth;
+          circuitD9U280Graph = circuitD9U280Integrated.microblossomValidatedStaticGraph;
+          circuitD9U280Static = circuitD9U280Graph.stages.static;
+          qshellU280Validation =
+            qshell.packages.${system}.qshell-u280-shell.coyoteTwoStage.physical.units.shell.validate;
+          circuitD9U280FinalContext = builtins.getContext circuitD9U280Integrated.buildPhase;
+          circuitD9U280StaticContext = builtins.getContext circuitD9U280Static.buildCommand;
+          contextReferences =
+            context: package: builtins.hasAttr (builtins.unsafeDiscardStringContext package.drvPath) context;
+          flakeLock = builtins.fromJSON (builtins.readFile ./flake.lock);
         in
         {
           formatting = (treefmtEval system).config.build.check self;
@@ -1635,6 +1763,76 @@
                 cp "$d9/rtl-manifest.json" "$out/circuit-d9-rtl-manifest.json"
                 cp "$d9_core/core-manifest.json" "$out/circuit-d9-core-manifest.json"
               '';
+          circuit-d9-u280-validated-static-graph =
+            assert coyote.rev == v80R5CoyoteRevision;
+            assert coyoteNix.rev == "223b72997585e66e6a3bcc208236cb02f653338e";
+            assert
+              flakeLock.nodes.root.inputs.coyote == [
+                "qshell"
+                "coyote"
+              ];
+            assert flakeLock.nodes."coyote-nix".locked.rev == coyoteNix.rev;
+            assert flakeLock.nodes."coyote-nix".locked.type == "github";
+            assert flakeLock.nodes."coyote-nix".locked.owner == "TUM-DSE";
+            assert flakeLock.nodes."coyote-nix".locked.repo == "coyote-nix";
+            assert
+              circuitD9U280Integrated.pname == "microblossom-circuit-level-d9-qshell-u280-integrated-strict";
+            assert
+              circuitD9U280IntegratedSynth.pname
+              == "microblossom-circuit-level-d9-qshell-u280-integrated-strict-synth";
+            assert circuitD9U280Integrated.drvPath != circuitD9U280IntegratedSynth.drvPath;
+            assert circuitD9U280Graph.stages.synth.drvPath == circuitD9U280IntegratedSynth.drvPath;
+            assert
+              circuitD9U280Graph.acceleratorSourceBaseRevision == "8381b4e74e6734c508a031f00f37cad96e743cbc";
+            assert
+              circuitD9U280Graph.graphSha256
+              == "9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a";
+            assert circuitD9U280Graph.acceleratorTiming.executeLatency == 2;
+            assert circuitD9U280Graph.acceleratorTiming.maxGrowablePipelineLatency == 2;
+            assert circuitD9U280Graph.acceleratorTiming.convergecastDelay == 1;
+            assert circuitD9U280Graph.acceleratorTiming.readLatency == 5;
+            assert circuitD9U280Graph.acceleratorTiming.initiationInterval == 1;
+            assert
+              circuitD9U280Graph.importedStatic.coyoteSourceId == builtins.hashString "sha256" (toString coyote);
+            assert
+              circuitD9U280Graph.importedStatic == {
+                api = "coyote-nix.u280-static-checkpoint/v1";
+                failClosed = true;
+                board = "u280";
+                architecture = "ultrascale_plus";
+                part = "xcu280-fsvh2892-2L-e";
+                toolVersion = "2023.2";
+                sourceStage = toString qshellU280Validation;
+                manifestId = "10966f56fb54acc5f337df96a8ebb93567322bb3da57f77d4f94b337487eb99a";
+                checkpointSha256 = "3250e9153b2d52886d1def70101b286eea95e73bea33d1b3fecb139dd5549ffb";
+                coyoteSourceId = "06d94332001897aa79cf950e18f6fa98315c38d3c10fe41678f1f5e68fc902b0";
+                fixedRouteNets = 151901;
+                reportHashesFromManifest = true;
+                staticLock = {
+                  level = "routing";
+                  protectedScope = "outside:inst_shell";
+                };
+                applicationLink = {
+                  reconfigurableCell = "inst_shell";
+                  preservePartitionPins = true;
+                  rejectProtectedStaticDrift = true;
+                };
+              };
+            assert contextReferences circuitD9U280FinalContext circuitD9U280Static;
+            assert contextReferences circuitD9U280StaticContext qshellU280Validation;
+            assert lib.all (
+              path:
+              !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-synth-" path
+              && !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-routed-" path
+            ) (builtins.attrNames circuitD9U280FinalContext ++ builtins.attrNames circuitD9U280StaticContext);
+            assert lib.hasInfix "-DEN_TIMING_CHECK:BOOL=ON" circuitD9U280IntegratedSynth.buildPhase;
+            assert lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1"
+              circuitD9U280IntegratedSynth.buildPhase;
+            assert lib.hasInfix "-DEN_TIMING_CHECK:BOOL=ON" circuitD9U280Integrated.buildPhase;
+            assert lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1" circuitD9U280Integrated.buildPhase;
+            pkgs.runCommand "microblossom-circuit-d9-u280-validated-static-graph" { } ''
+              touch "$out"
+            '';
           graph-matrix-contract =
             assert builtins.length graphSpecs == 34;
             assert builtins.length (lib.unique (map (spec: spec.id) graphSpecs)) == 34;
@@ -2006,7 +2204,8 @@
           qshell-coprocessor-package =
             assert qshell.rev == v80R5QshellRevision;
             assert coyote.rev == v80R5CoyoteRevision;
-            assert coyoteNix.rev == v80R5CoyoteNixRevision;
+            assert qshell.inputs."coyote-nix".rev == v80R5CoyoteNixRevision;
+            assert coyoteNix.rev == "223b72997585e66e6a3bcc208236cb02f653338e";
             assert qshellLib.applicationContract.recordAbi == qshellAbiSpec.version;
             assert qshellLib.applicationContract.controlAbi == "qshell-control";
             assert qshellLib.applicationContract.coyoteExternalServiceInterface == 1;
