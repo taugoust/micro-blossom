@@ -884,12 +884,14 @@ class ConflictReductionTest extends AnyFunSuite {
 
   test("circuit d3 preserves conflict priority and one-cycle alignment") {
     assert(circuitD3.edgeNum == 39)
+    assert(circuitD3.distributedControlLatency == 1)
+    assert(circuitD3.broadcastLatency == 1)
     assert(circuitD3.executeLatency == 0)
     assert(circuitD3.maxGrowablePipelineLatency == 0)
     assert(circuitD3.convergecastDelay == 1)
     assert(pipelineLatency(circuitD3) == 0)
     assert(tailLatency(circuitD3) == 1)
-    assert(circuitD3.readLatency == 1)
+    assert(circuitD3.readLatency == 2)
     assert(circuitD3.initiationInterval == 1)
 
     compiledD3.doSim("equal-valid-priority-random-latency") { dut =>
@@ -912,12 +914,14 @@ class ConflictReductionTest extends AnyFunSuite {
     val groups = DistributedDual.contiguousGroups(order, 32)
     assert(groups.forall(group => group.length == 54 || group.length == 55))
     assert(groups.flatten == order)
+    assert(circuitD9.distributedControlLatency == 2)
+    assert(circuitD9.broadcastLatency == 2)
     assert(circuitD9.executeLatency == 2)
     assert(circuitD9.maxGrowablePipelineLatency == 2)
     assert(circuitD9.convergecastDelay == 1)
     assert(pipelineLatency(circuitD9) == 1)
     assert(tailLatency(circuitD9) == 2)
-    assert(circuitD9.readLatency == 5)
+    assert(circuitD9.readLatency == 7)
     assert(circuitD9.initiationInterval == 1)
 
     compiledD9.doSim("equal-valid-priority-random-latency") { dut =>

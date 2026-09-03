@@ -15,7 +15,7 @@
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
     coyote.follows = "qshell/coyote";
     coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/223b72997585e66e6a3bcc208236cb02f653338e";
+      url = "github:TUM-DSE/coyote-nix/27b62a9ac918224db2806f464a117c913e58d189";
       inputs.coyote.follows = "coyote";
       inputs.flake-utils.follows = "qshell/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -992,23 +992,29 @@
               hwSource = mkGraphQshellAppHwSource spec core;
               mkApp =
                 board:
-                qshellLib.mkQshellAppPackage {
-                  pname = "microblossom-${spec.id}-qshell-${board}-app";
-                  inherit hwSource board;
-                  provenance = {
-                    application = "microblossom-host-driven";
-                    graphFamily = spec.generatorVariant;
-                    codeDistance = spec.distance;
-                    physicalErrorRate = spec.physicalErrorRate;
-                    maxHalfWeight = spec.maxHalfWeight;
-                    measurementRounds = spec.measurementRounds;
-                    graphSha256 = spec.graphSha256;
-                    qshellRecordAbi = qshellAbiSpec.version;
-                    mbqProtocol = 1;
-                    acceleratorClockDivideBy = 2;
-                    acceleratorTiming = graphTiming spec;
-                  };
-                };
+                qshellLib.mkQshellAppPackage (
+                  {
+                    pname = "microblossom-${spec.id}-qshell-${board}-app";
+                    inherit hwSource board;
+                    provenance = {
+                      application = "microblossom-host-driven";
+                      graphFamily = spec.generatorVariant;
+                      codeDistance = spec.distance;
+                      physicalErrorRate = spec.physicalErrorRate;
+                      maxHalfWeight = spec.maxHalfWeight;
+                      measurementRounds = spec.measurementRounds;
+                      graphSha256 = spec.graphSha256;
+                      qshellRecordAbi = qshellAbiSpec.version;
+                      mbqProtocol = 1;
+                      acceleratorClockDivideBy = 2;
+                      acceleratorTiming = graphTiming spec;
+                    };
+                  }
+                  // lib.optionalAttrs (spec.id == "circuit-level-d9" && board == "v80") {
+                    cmakeFlags = [ "-DEN_TIMING_CHECK:BOOL=ON" ];
+                    implementation.enforceTiming = true;
+                  }
+                );
             in
             {
               inherit
@@ -1186,7 +1192,7 @@
           circuitD9QshellU280Integrated = circuitD9QshellU280IntegratedRaw.overrideAttrs (oldAttrs: {
             passthru = (oldAttrs.passthru or { }) // {
               microblossomValidatedStaticGraph = {
-                acceleratorSourceBaseRevision = "8381b4e74e6734c508a031f00f37cad96e743cbc";
+                acceleratorSourceBaseRevision = "990affc28ba7d8c1c5aa4fe38eb60f547e479e87";
                 graphSha256 = circuitD9GraphEntry.spec.graphSha256;
                 acceleratorTiming = graphTiming circuitD9GraphEntry.spec;
                 importedStatic = circuitD9QshellU280IntegratedStatic.coyoteStaticCheckpoint;
@@ -1972,7 +1978,12 @@
               '';
           circuit-d9-v80-physical-profiles =
             let
-              profiles = [
+              strictPackages = [
+                circuitD9V80Default
+                circuitD9V80CongestionSpread
+                circuitD9V80TimingDriven
+              ];
+              profilePackages = [
                 circuitD9V80CongestionSpread
                 circuitD9V80TimingDriven
               ];
@@ -2016,8 +2027,8 @@
             assert
               circuitD9V80TimingDriven.pname
               == "microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict";
-            assert lib.all fullGraphIsStrict profiles;
-            assert lib.all profileStrategiesMatch profiles;
+            assert lib.all fullGraphIsStrict strictPackages;
+            assert lib.all profileStrategiesMatch profilePackages;
             assert circuitD9V80CongestionSpread.microblossomPhysicalProfile.id == "congestion-spread";
             assert circuitD9V80TimingDriven.microblossomPhysicalProfile.id == "timing-driven";
             assert
@@ -2035,7 +2046,7 @@
             '';
           circuit-d9-u280-validated-static-graph =
             assert coyote.rev == v80R5CoyoteRevision;
-            assert coyoteNix.rev == "223b72997585e66e6a3bcc208236cb02f653338e";
+            assert coyoteNix.rev == "27b62a9ac918224db2806f464a117c913e58d189";
             assert
               flakeLock.nodes.root.inputs.coyote == [
                 "qshell"
@@ -2053,14 +2064,15 @@
             assert circuitD9U280Integrated.drvPath != circuitD9U280IntegratedSynth.drvPath;
             assert circuitD9U280Graph.stages.synth.drvPath == circuitD9U280IntegratedSynth.drvPath;
             assert
-              circuitD9U280Graph.acceleratorSourceBaseRevision == "8381b4e74e6734c508a031f00f37cad96e743cbc";
+              circuitD9U280Graph.acceleratorSourceBaseRevision == "990affc28ba7d8c1c5aa4fe38eb60f547e479e87";
             assert
               circuitD9U280Graph.graphSha256
               == "9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a";
+            assert circuitD9U280Graph.acceleratorTiming.broadcastLatency == 2;
             assert circuitD9U280Graph.acceleratorTiming.executeLatency == 2;
             assert circuitD9U280Graph.acceleratorTiming.maxGrowablePipelineLatency == 2;
             assert circuitD9U280Graph.acceleratorTiming.convergecastDelay == 1;
-            assert circuitD9U280Graph.acceleratorTiming.readLatency == 5;
+            assert circuitD9U280Graph.acceleratorTiming.readLatency == 7;
             assert circuitD9U280Graph.acceleratorTiming.initiationInterval == 1;
             assert
               circuitD9U280Graph.importedStatic.coyoteSourceId == builtins.hashString "sha256" (toString coyote);
@@ -2475,7 +2487,7 @@
             assert qshell.rev == v80R5QshellRevision;
             assert coyote.rev == v80R5CoyoteRevision;
             assert qshell.inputs."coyote-nix".rev == v80R5CoyoteNixRevision;
-            assert coyoteNix.rev == "223b72997585e66e6a3bcc208236cb02f653338e";
+            assert coyoteNix.rev == "27b62a9ac918224db2806f464a117c913e58d189";
             assert qshellLib.applicationContract.recordAbi == qshellAbiSpec.version;
             assert qshellLib.applicationContract.controlAbi == "qshell-control";
             assert qshellLib.applicationContract.coyoteExternalServiceInterface == 1;
