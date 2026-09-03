@@ -533,10 +533,13 @@ class DistributedDualTest extends AnyFunSuite {
     Config.spinal().generateVerilog(DistributedDual(config, ioConfig))
   }
 
-  test("test pipeline registers") {
+  test("three balanced stage registers preserve directed execution") {
     // gtkwave simWorkspace/DistributedDual/testA.fst
     val config = DualConfig(filename = "./resources/graphs/example_code_capacity_d3.json", minimizeBits = false)
     val ioConfig = DualConfig()
+    config.injectRegisters = Seq("offload3", "execute2", "update")
+    assert(config.executeLatency == 3)
+    assert(config.readLatency == 4)
     config.graph.offloading = Seq() // remove all offloaders
     config.fitGraph(minimizeBits = false)
     config.sanityCheck()

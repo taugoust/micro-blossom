@@ -707,6 +707,13 @@
           };
 
           graphSpecs = import ./nix/microblossom-graph-specs.nix;
+          graphInjectedRegisters =
+            spec:
+            lib.optionals (spec.id == "circuit-level-d9") [
+              "offload3"
+              "execute2"
+              "update"
+            ];
 
           mkGraphFixture =
             spec:
@@ -773,6 +780,11 @@
 
           mkGraphRtl =
             spec: fixture:
+            let
+              injectedRegisters = graphInjectedRegisters spec;
+              executeLatency = builtins.length injectedRegisters;
+              readLatency = 1 + executeLatency;
+            in
             pkgs.runCommand "microblossom-${spec.id}-rtl-v1"
               {
                 nativeBuildInputs = [
@@ -798,6 +810,9 @@
                   --convergecast-delay 1 \
                   --context-depth 1 \
                   --conflict-channels 1 \
+                  ${lib.optionalString (
+                    injectedRegisters != [ ]
+                  ) "--inject-registers ${lib.escapeShellArgs injectedRegisters} \\"}
                   --clock-divide-by 2
 
                 test -s "$TMPDIR/generated/MicroBlossomBus.v"
@@ -811,6 +826,9 @@
                   --arg graphSha256 ${spec.graphSha256} \
                   --arg rtlSha256 "$(sha256sum "$rtl/MicroBlossomBus.v" | cut -d' ' -f1)" \
                   --arg generatorJarSha256 "$(sha256sum ${microblossomScala}/share/java/microblossom.jar | cut -d' ' -f1)" \
+                  --argjson injectedRegisters '${builtins.toJSON injectedRegisters}' \
+                  --argjson executeLatency ${toString executeLatency} \
+                  --argjson readLatency ${toString readLatency} \
                   '{
                     schemaVersion: 1,
                     fixtureId: $fixtureId,
@@ -818,12 +836,25 @@
                     busType: "Axi4",
                     graphSha256: $graphSha256,
                     rtlSha256: $rtlSha256,
-                    generatorJarSha256: $generatorJarSha256
+                    generatorJarSha256: $generatorJarSha256,
+                    timing: {
+                      broadcastDelay: 0,
+                      convergecastDelay: 1,
+                      injectedRegisters: $injectedRegisters,
+                      executeLatency: $executeLatency,
+                      readLatency: $readLatency,
+                      clockDivideBy: 2
+                    }
                   }' > "$rtl/rtl-manifest.json"
               '';
 
           mkGraphQshellCore =
             spec: rtl:
+            let
+              injectedRegisters = graphInjectedRegisters spec;
+              executeLatency = builtins.length injectedRegisters;
+              readLatency = 1 + executeLatency;
+            in
             pkgs.runCommand "microblossom-${spec.id}-qshell-core-v1"
               {
                 nativeBuildInputs = [
@@ -861,6 +892,9 @@
                   --arg graphSha256 ${spec.graphSha256} \
                   --arg acceleratorRtlSha256 "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
+                  --argjson injectedRegisters '${builtins.toJSON injectedRegisters}' \
+                  --argjson executeLatency ${toString executeLatency} \
+                  --argjson readLatency ${toString readLatency} \
                   '{
                     schemaVersion: 1,
                     fixtureId: $fixtureId,
@@ -880,6 +914,9 @@
                     acceleratorClockDivideBy: 2,
                     acceleratorClockInput: "slow_clk",
                     acceleratorClockStrategy: "BUFGCE_DIV/2",
+                    acceleratorInjectedRegisters: $injectedRegisters,
+                    acceleratorExecuteLatency: $executeLatency,
+                    acceleratorReadLatency: $readLatency,
                     outerQshellEnvelope: "QShell ABI 2",
                     outerQshellRequestBeats: 2,
                     outerQshellResponseBeats: 2,
@@ -930,6 +967,9 @@
                     qshellRecordAbi = qshellAbiSpec.version;
                     mbqProtocol = 1;
                     acceleratorClockDivideBy = 2;
+                    acceleratorInjectedRegisters = graphInjectedRegisters spec;
+                    acceleratorExecuteLatency = builtins.length (graphInjectedRegisters spec);
+                    acceleratorReadLatency = 1 + builtins.length (graphInjectedRegisters spec);
                   };
                 };
             in
@@ -1431,6 +1471,8 @@
           host = self.packages.${system}.microblossom-host;
           fixture = self.packages.${system}.microblossom-d3-graph;
           circuitD9Fixture = self.packages.${system}.microblossom-circuit-level-d9-graph;
+          circuitD9Rtl = self.packages.${system}.microblossom-circuit-level-d9-rtl;
+          circuitD9Core = self.packages.${system}.microblossom-circuit-level-d9-qshell-core;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
@@ -1494,6 +1536,66 @@
                   | tee "$out/test.log"
                 grep -F 'All tests passed.' "$out/test.log" >/dev/null
                 verilator --version > "$out/verilator-version.txt"
+              '';
+          stage-pipeline-behavior =
+            pkgs.runCommand "microblossom-stage-pipeline-behavior-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.jdk11
+                  pkgs.stdenv.cc
+                  pkgs.zlib
+                  verilator_5_014
+                ];
+              }
+              ''
+                set -o pipefail
+                mkdir -p "$out" "$TMPDIR/home" "$TMPDIR/resources/graphs"
+                export HOME="$TMPDIR/home"
+                cp ${fixture}/share/microblossom/fixtures/code-capacity-repetition-d3-v1/graph.json \
+                  "$TMPDIR/resources/graphs/example_code_capacity_d3.json"
+                cd "$TMPDIR"
+                timeout 900 java -Xmx4G \
+                  -cp ${scala}/share/java/microblossom.jar \
+                  org.scalatest.tools.Runner \
+                  -oD -s microblossom.modules.DistributedDualTest \
+                  | tee "$out/test.log"
+                grep -F 'three balanced stage registers preserve directed execution' \
+                  "$out/test.log" >/dev/null
+                grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+              '';
+          stage-pipeline-contract =
+            pkgs.runCommand "microblossom-circuit-d9-stage-pipeline-contract"
+              { nativeBuildInputs = [ pkgs.jq ]; }
+              ''
+                rtl=${circuitD9Rtl}/share/microblossom/rtl/circuit-level-d9-v1
+                core=${circuitD9Core}/share/microblossom/qshell-core/circuit-level-d9-v1
+                test "$(sha256sum "$rtl/MicroBlossomBus.v" | cut -d' ' -f1)" = \
+                  "$(jq -er '.rtlSha256' "$rtl/rtl-manifest.json")"
+                test "$(jq -er '.graphSha256' "$rtl/rtl-manifest.json")" = \
+                  '9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a'
+                jq -e '
+                  .timing == {
+                    "broadcastDelay": 0,
+                    "convergecastDelay": 1,
+                    "injectedRegisters": ["offload3", "execute2", "update"],
+                    "executeLatency": 3,
+                    "readLatency": 4,
+                    "clockDivideBy": 2
+                  }
+                ' "$rtl/rtl-manifest.json" >/dev/null
+                jq -e '
+                  .acceleratorInjectedRegisters == ["offload3", "execute2", "update"] and
+                  .acceleratorExecuteLatency == 3 and
+                  .acceleratorReadLatency == 4 and
+                  .acceleratorClockDivideBy == 2
+                ' "$core/core-manifest.json" >/dev/null
+                test "$(jq -er '.acceleratorRtlSha256' "$core/core-manifest.json")" = \
+                  "$(jq -er '.rtlSha256' "$rtl/rtl-manifest.json")"
+                mkdir -p "$out"
+                cp "$rtl/rtl-manifest.json" "$out/rtl-manifest.json"
+                cp "$core/core-manifest.json" "$out/core-manifest.json"
               '';
           graph-matrix-contract =
             assert builtins.length graphSpecs == 34;
