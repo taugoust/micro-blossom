@@ -90,6 +90,41 @@ object DistributedDual {
       reduceMaxGrowable(level)(lengthOf)
     }
   }
+
+  private[modules] def conflictLeafIndicesInOrder(tree: BinaryTree): IndexedSeq[Int] = {
+    maxGrowableLeafIndicesInOrder(tree)
+  }
+
+  private[modules] def reduceConflict[T <: Data](candidates: Seq[T])(validOf: T => Bool): T = {
+    require(candidates.nonEmpty)
+    candidates.reduceBalancedTree { (left, right) =>
+      Mux(validOf(left), left, right)
+    }
+  }
+
+  private[modules] def conflictBoundaryGroupCount(candidateCount: Int): Int = {
+    require(candidateCount > 0)
+    1 << (log2Up(candidateCount) / 2)
+  }
+
+  private[modules] def reduceConflictPipelined[T <: Data](
+      candidates: IndexedSeq[T],
+      pipelineLatency: Int
+  )(validOf: T => Bool): T = {
+    require(candidates.nonEmpty)
+    require(pipelineLatency == 0 || pipelineLatency == 1)
+    if (pipelineLatency == 0) {
+      reduceConflict(candidates)(validOf)
+    } else {
+      val groups = contiguousGroups(candidates, conflictBoundaryGroupCount(candidates.length))
+      val registeredWinners = groups.zipWithIndex.map { case (group, index) =>
+        val registered = RegNext(reduceConflict(group)(validOf))
+        registered.setName(s"conflictPipeline_$index")
+        registered
+      }
+      reduceConflict(registeredWinners)(validOf)
+    }
+  }
 }
 
 case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Component {
@@ -178,27 +213,19 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
   )
   io.maxGrowable.resizedFrom(selectedMaxGrowable)
 
-  // build convergecast tree of conflict
-  val conflictConvergecastTree =
-    Vec.fill(config.graph.edge_binary_tree.nodes.length)(ConvergecastConflict(config.vertexBits))
-  for ((treeNode, index) <- config.graph.edge_binary_tree.nodes.zipWithIndex) {
-    if (index < config.edgeNum) {
-      val edgeIndex = index
-      conflictConvergecastTree(index) := edges(edgeIndex).io.conflict
-    } else {
-      val left = conflictConvergecastTree(treeNode.l.get.toInt)
-      val right = conflictConvergecastTree(treeNode.r.get.toInt)
-      when(left.valid) {
-        conflictConvergecastTree(index) := left
-      } otherwise {
-        conflictConvergecastTree(index) := right
-      }
-    }
-  }
-  val convergecastedConflict = Delay(
-    conflictConvergecastTree(config.graph.edge_binary_tree.nodes.length - 1),
-    config.maxGrowablePipelineLatency + config.convergecastDelay
-  )
+  // Preserve the graph tree's leaf order while balancing the conflict reduction.
+  val conflictCandidates = edges.map(_.io.conflict)
+  val conflictInOrder = DistributedDual
+    .conflictLeafIndicesInOrder(config.graph.edge_binary_tree)
+    .map(index => conflictCandidates(index))
+  val conflictPipelineLatency = Math.min(config.maxGrowablePipelineLatency, 1)
+  val selectedConflict = DistributedDual.reduceConflictPipelined(
+    conflictInOrder,
+    conflictPipelineLatency
+  )(_.valid)
+  val conflictTailLatency =
+    config.maxGrowablePipelineLatency + config.convergecastDelay - conflictPipelineLatency
+  val convergecastedConflict = Delay(selectedConflict, conflictTailLatency)
   io.conflict.resizedFrom(convergecastedConflict)
 
   // build convergecast tree of parity reporter
@@ -612,6 +639,273 @@ class MaxGrowableReductionTest extends AnyFunSuite {
         sleep(1)
         checkOutput(dut, pending.dequeue())
       }
+    }
+  }
+}
+
+private[modules] case class TaggedConflict(payloadBits: Int, sourceBits: Int) extends Bundle {
+  val valid = Bool()
+  val payload = UInt(payloadBits bits)
+  val source = UInt(sourceBits bits)
+}
+
+private[modules] case class ConflictReductionHarness(
+    tree: BinaryTree,
+    candidateCount: Int,
+    payloadBits: Int,
+    pipelineLatency: Int,
+    tailLatency: Int
+) extends Component {
+  private val sourceBits = log2Up(candidateCount)
+
+  val io = new Bundle {
+    val valids = in(Vec.fill(candidateCount)(Bool))
+    val payloads = in(Vec.fill(candidateCount)(UInt(payloadBits bits)))
+    val selectedValid = out(Bool)
+    val selectedPayload = out(UInt(payloadBits bits))
+    val selectedSource = out(UInt(sourceBits bits))
+  }
+
+  val candidates = io.valids.zip(io.payloads).zipWithIndex.map { case ((valid, payload), index) =>
+    val candidate = TaggedConflict(payloadBits, sourceBits)
+    candidate.valid := valid
+    candidate.payload := payload
+    candidate.source := U(index, sourceBits bits)
+    candidate
+  }
+  val inOrder = DistributedDual
+    .conflictLeafIndicesInOrder(tree)
+    .map(index => candidates(index))
+  val selected = Delay(
+    DistributedDual.reduceConflictPipelined(inOrder, pipelineLatency)(_.valid),
+    tailLatency
+  )
+  io.selectedValid := selected.valid
+  io.selectedPayload := selected.payload
+  io.selectedSource := selected.source
+}
+
+class ConflictReductionTest extends AnyFunSuite {
+  private case class InputCandidate(valid: Boolean, payload: Int)
+  private case class ModelCandidate(valid: Boolean, payload: Int, source: Int)
+
+  private val payloadBits = 8
+
+  private def graphConfig(environmentName: String): DualConfig = {
+    val graphPath = sys.env.getOrElse(
+      environmentName,
+      fail(s"$environmentName must name a circuit-level graph")
+    )
+    DualConfig(filename = graphPath)
+  }
+
+  private lazy val circuitD3 = graphConfig("MICROBLOSSOM_CIRCUIT_D3_GRAPH")
+  private lazy val circuitD9 = {
+    val config = graphConfig("MICROBLOSSOM_CIRCUIT_D9_GRAPH")
+    config.injectRegisters = Seq("execute2", "update")
+    config.maxGrowablePipelineLatency = 2
+    config
+  }
+
+  private def pipelineLatency(config: DualConfig): Int = {
+    Math.min(config.maxGrowablePipelineLatency, 1)
+  }
+
+  private def tailLatency(config: DualConfig): Int = {
+    config.maxGrowablePipelineLatency + config.convergecastDelay - pipelineLatency(config)
+  }
+
+  private def totalLatency(config: DualConfig): Int = {
+    pipelineLatency(config) + tailLatency(config)
+  }
+
+  private lazy val compiledD3 = SimConfig
+    .withConfig(Config.spinal())
+    .workspaceName("conflict-circuit-d3")
+    .allOptimisation
+    .compile(
+      ConflictReductionHarness(
+        circuitD3.graph.edge_binary_tree,
+        circuitD3.edgeNum,
+        payloadBits,
+        pipelineLatency(circuitD3),
+        tailLatency(circuitD3)
+      )
+    )
+
+  private lazy val compiledD9 = SimConfig
+    .withConfig(Config.spinal())
+    .workspaceName("conflict-circuit-d9-pipelined")
+    .allOptimisation
+    .compile(
+      ConflictReductionHarness(
+        circuitD9.graph.edge_binary_tree,
+        circuitD9.edgeNum,
+        payloadBits,
+        pipelineLatency(circuitD9),
+        tailLatency(circuitD9)
+      )
+    )
+
+  private def select(left: ModelCandidate, right: ModelCandidate): ModelCandidate = {
+    if (left.valid) left else right
+  }
+
+  private def legacyTreeReduce(
+      tree: BinaryTree,
+      values: IndexedSeq[InputCandidate],
+      nodeIndex: Int
+  ): ModelCandidate = {
+    val node = tree.nodes(nodeIndex)
+    (node.l, node.r) match {
+      case (None, None) =>
+        val value = values(nodeIndex)
+        ModelCandidate(value.valid, value.payload, nodeIndex)
+      case (Some(left), Some(right)) =>
+        select(
+          legacyTreeReduce(tree, values, left.toInt),
+          legacyTreeReduce(tree, values, right.toInt)
+        )
+      case _ => fail("binary tree node must have either zero or two children")
+    }
+  }
+
+  private def expected(config: DualConfig, values: IndexedSeq[InputCandidate]): ModelCandidate = {
+    val tree = config.graph.edge_binary_tree
+    legacyTreeReduce(tree, values, tree.nodes.length - 1)
+  }
+
+  private def orderedExpected(config: DualConfig, values: IndexedSeq[InputCandidate]): ModelCandidate = {
+    DistributedDual
+      .conflictLeafIndicesInOrder(config.graph.edge_binary_tree)
+      .map { index =>
+        val value = values(index)
+        ModelCandidate(value.valid, value.payload, index)
+      }
+      .reduceLeft(select)
+  }
+
+  private def directedVectors(config: DualConfig): Seq[IndexedSeq[InputCandidate]] = {
+    val order = DistributedDual.conflictLeafIndicesInOrder(config.graph.edge_binary_tree)
+    val groups = DistributedDual.contiguousGroups(
+      order,
+      DistributedDual.conflictBoundaryGroupCount(order.length)
+    )
+    val acrossBoundary = Set(groups.head.last, groups(1).head, groups.last.last)
+    Seq(
+      IndexedSeq.fill(config.edgeNum)(InputCandidate(valid = true, payload = 7)),
+      IndexedSeq.tabulate(config.edgeNum)(index => InputCandidate(valid = false, payload = index & 0xff)),
+      IndexedSeq.tabulate(config.edgeNum) { index =>
+        InputCandidate(valid = acrossBoundary.contains(index), payload = 11)
+      },
+      IndexedSeq.tabulate(config.edgeNum) { index =>
+        InputCandidate(valid = index == order.last, payload = 13)
+      }
+    )
+  }
+
+  private def randomVectors(
+      config: DualConfig,
+      count: Int,
+      seed: Long
+  ): Seq[IndexedSeq[InputCandidate]] = {
+    val random = new scala.util.Random(seed)
+    Seq.fill(count)(
+      IndexedSeq.fill(config.edgeNum)(
+        InputCandidate(random.nextInt(4) == 0, random.nextInt(1 << payloadBits))
+      )
+    )
+  }
+
+  private def drive(dut: ConflictReductionHarness, values: IndexedSeq[InputCandidate]): Unit = {
+    values.zipWithIndex.foreach { case (value, index) =>
+      dut.io.valids(index) #= value.valid
+      dut.io.payloads(index) #= value.payload
+    }
+  }
+
+  private def checkOutput(dut: ConflictReductionHarness, reference: ModelCandidate): Unit = {
+    assert(dut.io.selectedValid.toBoolean == reference.valid)
+    assert(dut.io.selectedPayload.toInt == reference.payload)
+    assert(dut.io.selectedSource.toInt == reference.source)
+  }
+
+  private def runVectors(
+      dut: ConflictReductionHarness,
+      config: DualConfig,
+      vectors: Seq[IndexedSeq[InputCandidate]]
+  ): Unit = {
+    val idle = IndexedSeq.fill(config.edgeNum)(InputCandidate(valid = false, payload = 0))
+    val latency = totalLatency(config)
+    val pending = scala.collection.mutable.Queue[ModelCandidate]()
+
+    drive(dut, idle)
+    for (_ <- 0 to latency) { dut.clockDomain.waitSampling() }
+
+    vectors.foreach { values =>
+      val reference = expected(config, values)
+      assert(orderedExpected(config, values) == reference)
+      drive(dut, values)
+      pending.enqueue(reference)
+      dut.clockDomain.waitSampling()
+      sleep(1)
+      if (pending.length >= latency) {
+        checkOutput(dut, pending.dequeue())
+      }
+    }
+    while (pending.nonEmpty) {
+      drive(dut, idle)
+      dut.clockDomain.waitSampling()
+      sleep(1)
+      checkOutput(dut, pending.dequeue())
+    }
+  }
+
+  test("circuit d3 preserves conflict priority and one-cycle alignment") {
+    assert(circuitD3.edgeNum == 39)
+    assert(circuitD3.executeLatency == 0)
+    assert(circuitD3.maxGrowablePipelineLatency == 0)
+    assert(circuitD3.convergecastDelay == 1)
+    assert(pipelineLatency(circuitD3) == 0)
+    assert(tailLatency(circuitD3) == 1)
+    assert(circuitD3.readLatency == 1)
+    assert(circuitD3.initiationInterval == 1)
+
+    compiledD3.doSim("equal-valid-priority-random-latency") { dut =>
+      dut.clockDomain.forkStimulus(period = 10)
+      runVectors(
+        dut,
+        circuitD3,
+        directedVectors(circuitD3) ++ randomVectors(circuitD3, 256, 0x3c0ff1c7L)
+      )
+    }
+  }
+
+  test("circuit d9 moves one conflict cycle into an ordered internal boundary") {
+    val order = DistributedDual.conflictLeafIndicesInOrder(circuitD9.graph.edge_binary_tree)
+    assert(circuitD9.edgeNum == 1737)
+    assert(order.length == circuitD9.edgeNum)
+    assert(order.distinct.length == circuitD9.edgeNum)
+    assert(order.sorted.sameElements(0 until circuitD9.edgeNum))
+    assert(DistributedDual.conflictBoundaryGroupCount(circuitD9.edgeNum) == 32)
+    val groups = DistributedDual.contiguousGroups(order, 32)
+    assert(groups.forall(group => group.length == 54 || group.length == 55))
+    assert(groups.flatten == order)
+    assert(circuitD9.executeLatency == 2)
+    assert(circuitD9.maxGrowablePipelineLatency == 2)
+    assert(circuitD9.convergecastDelay == 1)
+    assert(pipelineLatency(circuitD9) == 1)
+    assert(tailLatency(circuitD9) == 2)
+    assert(circuitD9.readLatency == 5)
+    assert(circuitD9.initiationInterval == 1)
+
+    compiledD9.doSim("equal-valid-priority-random-latency") { dut =>
+      dut.clockDomain.forkStimulus(period = 10)
+      runVectors(
+        dut,
+        circuitD9,
+        directedVectors(circuitD9) ++ randomVectors(circuitD9, 32, 0x9c0ff1c7L)
+      )
     }
   }
 }

@@ -1547,6 +1547,31 @@
                 grep -F 'All tests passed.' "$out/test.log" >/dev/null
                 verilator --version > "$out/verilator-version.txt"
               '';
+          conflict-reduction =
+            pkgs.runCommand "microblossom-conflict-reduction-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.gnumake
+                  pkgs.jdk11
+                  pkgs.stdenv.cc
+                  verilator_5_014
+                ];
+              }
+              ''
+                set -o pipefail
+                mkdir -p "$out" "$TMPDIR/home"
+                export HOME="$TMPDIR/home"
+                export MICROBLOSSOM_CIRCUIT_D3_GRAPH=${circuitD3Fixture}/share/microblossom/fixtures/circuit-level-d3-v1/graph.json
+                export MICROBLOSSOM_CIRCUIT_D9_GRAPH=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1/graph.json
+                cd "$TMPDIR"
+                timeout 900 java -Xmx8G \
+                  -cp ${scala}/share/java/microblossom.jar \
+                  org.scalatest.tools.Runner \
+                  -oD -s microblossom.modules.ConflictReductionTest \
+                  | tee "$out/test.log"
+                grep -F 'All tests passed.' "$out/test.log" >/dev/null
+                verilator --version > "$out/verilator-version.txt"
+              '';
           max-growable-generated-registers =
             pkgs.runCommand "microblossom-max-growable-generated-registers-check"
               {
@@ -1611,6 +1636,53 @@
                     raise SystemExit("first max-growable boundary is not 256 complete ordered candidates")
                 if register_indices(1) != set(range(16)):
                     raise SystemExit("second max-growable boundary is not 16 complete ordered candidates")
+
+                conflict_fields = (
+                    "node1",
+                    "node2",
+                    "touch1",
+                    "touch2",
+                    "vertex1",
+                    "vertex2",
+                    "valid",
+                )
+                if "conflictPipeline_" in d3:
+                    raise SystemExit("circuit d3 unexpectedly contains a conflict pipeline boundary")
+
+                conflict_registers = {field: set() for field in conflict_fields}
+                conflict_pattern = re.compile(
+                    r"\breg\s+(?:\[[^\]]+\]\s+)?conflictPipeline_(\d+)_"
+                    + "(" + "|".join(conflict_fields) + r")\s*;"
+                )
+                for index, field in conflict_pattern.findall(d9):
+                    conflict_registers[field].add(int(index))
+                expected_conflict_registers = set(range(32))
+                incomplete_fields = {
+                    field: sorted(indices)
+                    for field, indices in conflict_registers.items()
+                    if indices != expected_conflict_registers
+                }
+                if incomplete_fields:
+                    raise SystemExit(
+                        "conflict boundary is not 32 complete whole candidates: "
+                        f"{incomplete_fields}"
+                    )
+
+                def has_reg(text: str, name: str) -> bool:
+                    return re.search(
+                        rf"\breg\s+(?:\[[^\]]+\]\s+)?{re.escape(name)}\s*;",
+                        text,
+                    ) is not None
+
+                for field in conflict_fields:
+                    if has_reg(d3, f"selectedConflict_delay_1_{field}"):
+                        raise SystemExit("circuit d3 unexpectedly lengthens the conflict tail")
+                    if not has_reg(d9, f"selectedConflict_delay_1_{field}"):
+                        raise SystemExit(f"circuit d9 is missing first conflict tail register field {field}")
+                    if has_reg(d9, f"selectedConflict_delay_2_{field}"):
+                        raise SystemExit(f"circuit d9 retains a three-cycle conflict tail field {field}")
+                    if not has_reg(d9, f"convergecastedConflict_{field}"):
+                        raise SystemExit(f"circuit d9 is missing final conflict tail register field {field}")
 
                 required_stage_fields = (
                     "pipelineAfter_execute2_state",
