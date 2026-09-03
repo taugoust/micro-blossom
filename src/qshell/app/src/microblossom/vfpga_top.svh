@@ -1,15 +1,15 @@
-// QShell ABI-2 MicroBlossom d3 application for Coyote region 0.
+// Host-driven MicroBlossom application using current QShell records.
 
 import lynxTypes::*;
 
+`include "hdl/microblossom_graph_identity.svh"
+
 localparam int MICROBLOSSOM_AXIS_ID_W = $bits(axis_host_recv[0].tid);
-localparam logic [255:0] MICROBLOSSOM_D3_GRAPH_ID =
-    256'hc5165387fab584bd0e1cbe32e5e49b89b3979a56146472a94eb26d6c3b8d074b;
 
 microblossom_qshell_application #(
     .AXIS_ID_W(MICROBLOSSOM_AXIS_ID_W),
     .TIMEOUT_CYCLES(1024),
-    .GRAPH_ID(MICROBLOSSOM_D3_GRAPH_ID)
+    .GRAPH_ID(MICROBLOSSOM_GRAPH_ID)
 ) inst_microblossom_qshell_application (
     .aclk(aclk),
     .aresetn(aresetn),

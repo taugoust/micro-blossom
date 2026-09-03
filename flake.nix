@@ -39,6 +39,13 @@
       v80R5QshellRevision = "fdb099f2d698535f185e90bff98e7d7987f5d969";
       v80R5CoyoteRevision = "d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
       v80R5CoyoteNixRevision = "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2";
+      graphSha256ToSystemVerilogLiteral =
+        graphSha256:
+        assert builtins.match "[0-9a-f]{64}" graphSha256 != null;
+        let
+          digestBytes = nixpkgs.lib.genList (index: builtins.substring (index * 2) 2 graphSha256) 32;
+        in
+        "256'h${nixpkgs.lib.concatStrings (nixpkgs.lib.reverseList digestBytes)}";
       mkVerilator_5_014 =
         pkgs:
         pkgs.verilator.overrideAttrs (_old: rec {
@@ -567,6 +574,13 @@
                   "$core/microblossom_qshell_envelope.sv"
                 cp ${./src/qshell/rtl/microblossom_qshell_application.sv} \
                   "$core/microblossom_qshell_application.sv"
+                cat > "$core/microblossom_graph_identity.svh" <<'EOF'
+                `ifndef MICROBLOSSOM_GRAPH_IDENTITY_SVH
+                `define MICROBLOSSOM_GRAPH_IDENTITY_SVH
+                localparam logic [255:0] MICROBLOSSOM_GRAPH_ID =
+                    ${graphSha256ToSystemVerilogLiteral "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5"};
+                `endif
+                EOF
                 cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
                   "$core/qshell_abi_generated.svh"
                 cp ${./src/qshell/README.md} "$core/protocol.md"
@@ -580,6 +594,8 @@
                   --arg timingConstraintsSha256 "$(sha256sum ${./src/qshell/app/src/microblossom/microblossom_qshell_timing.xdc} | cut -d' ' -f1)" \
                   --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope.sv" | cut -d' ' -f1)" \
                   --arg applicationSha256 "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" \
+                  --arg graphIdentitySha256 "$(sha256sum "$core/microblossom_graph_identity.svh" | cut -d' ' -f1)" \
+                  --arg graphIdSystemVerilogLiteral "${graphSha256ToSystemVerilogLiteral "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5"}" \
                   --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
                   '{
@@ -607,6 +623,13 @@
                     outerQshellResponseBeats: 2,
                     qshellRevision: $qshellRevision,
                     graphSha256: $graphSha256,
+                    graphIdentity: {
+                      algorithm: "sha256",
+                      wireByteOrder: "digest-order",
+                      packedBitOrder: "byte-0-in-bits-7:0",
+                      systemVerilogLiteral: $graphIdSystemVerilogLiteral,
+                      sourceSha256: $graphIdentitySha256
+                    },
                     acceleratorRtlSha256: $acceleratorRtlSha256,
                     frontendSha256: $frontendSha256,
                     coreSha256: $coreSha256,
@@ -631,6 +654,7 @@
             cp "$core/microblossom_qshell_clock_div2.sv" "$hdl/"
             cp "$core/microblossom_qshell_envelope.sv" "$hdl/"
             cp "$core/microblossom_qshell_application.sv" "$hdl/"
+            cp "$core/microblossom_graph_identity.svh" "$hdl/"
             cp "$core/qshell_abi_generated.svh" "$hdl/"
             cp "$core/core-manifest.json" "$out/"
           '';
@@ -707,6 +731,10 @@
           };
 
           graphSpecs = import ./nix/microblossom-graph-specs.nix;
+          matchedCircuitGraphIds = [
+            "circuit-level-d3"
+            "circuit-level-d9"
+          ];
 
           mkGraphFixture =
             spec:
@@ -824,6 +852,9 @@
 
           mkGraphQshellCore =
             spec: rtl:
+            let
+              graphIdSystemVerilogLiteral = graphSha256ToSystemVerilogLiteral spec.graphSha256;
+            in
             pkgs.runCommand "microblossom-${spec.id}-qshell-core-v1"
               {
                 nativeBuildInputs = [
@@ -847,6 +878,13 @@
                   "$core/microblossom_qshell_envelope.sv"
                 cp ${./src/qshell/rtl/microblossom_qshell_application.sv} \
                   "$core/microblossom_qshell_application.sv"
+                cat > "$core/microblossom_graph_identity.svh" <<'EOF'
+                `ifndef MICROBLOSSOM_GRAPH_IDENTITY_SVH
+                `define MICROBLOSSOM_GRAPH_IDENTITY_SVH
+                localparam logic [255:0] MICROBLOSSOM_GRAPH_ID =
+                    ${graphIdSystemVerilogLiteral};
+                `endif
+                EOF
                 cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
                   "$core/qshell_abi_generated.svh"
                 cp ${./src/qshell/README.md} "$core/protocol.md"
@@ -859,7 +897,16 @@
                   --argjson maxHalfWeight ${toString spec.maxHalfWeight} \
                   --argjson measurementRounds '${builtins.toJSON spec.measurementRounds}' \
                   --arg graphSha256 ${spec.graphSha256} \
+                  --arg graphIdSystemVerilogLiteral "${graphIdSystemVerilogLiteral}" \
                   --arg acceleratorRtlSha256 "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" \
+                  --arg frontendSha256 "$(sha256sum "$core/microblossom_qshell_frontend.sv" | cut -d' ' -f1)" \
+                  --arg coreSha256 "$(sha256sum "$core/microblossom_qshell_core.sv" | cut -d' ' -f1)" \
+                  --arg clockDividerSha256 "$(sha256sum "$core/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" \
+                  --arg timingConstraintsSha256 "$(sha256sum ${./src/qshell/app/src/microblossom/microblossom_qshell_timing.xdc} | cut -d' ' -f1)" \
+                  --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope.sv" | cut -d' ' -f1)" \
+                  --arg applicationSha256 "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" \
+                  --arg graphIdentitySha256 "$(sha256sum "$core/microblossom_graph_identity.svh" | cut -d' ' -f1)" \
+                  --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
                   '{
                     schemaVersion: 1,
@@ -879,13 +926,33 @@
                     timeoutCyclesDefault: 1024,
                     acceleratorClockDivideBy: 2,
                     acceleratorClockInput: "slow_clk",
-                    acceleratorClockStrategy: "BUFGCE_DIV/2",
+                    acceleratorResetStrategy: "independent-fast-slow",
+                    acceleratorCdcPayloadMemory: "dual-clock-block-ram",
+                    applicationClockInputMHz: {
+                      u280: 250,
+                      v80: 333
+                    },
+                    applicationClockStrategy: "BUFGCE_DIV/2",
                     outerQshellEnvelope: "QShell ABI 2",
                     outerQshellRequestBeats: 2,
                     outerQshellResponseBeats: 2,
                     qshellRevision: $qshellRevision,
                     graphSha256: $graphSha256,
-                    acceleratorRtlSha256: $acceleratorRtlSha256
+                    graphIdentity: {
+                      algorithm: "sha256",
+                      wireByteOrder: "digest-order",
+                      packedBitOrder: "byte-0-in-bits-7:0",
+                      systemVerilogLiteral: $graphIdSystemVerilogLiteral,
+                      sourceSha256: $graphIdentitySha256
+                    },
+                    acceleratorRtlSha256: $acceleratorRtlSha256,
+                    frontendSha256: $frontendSha256,
+                    coreSha256: $coreSha256,
+                    clockDividerSha256: $clockDividerSha256,
+                    timingConstraintsSha256: $timingConstraintsSha256,
+                    envelopeSha256: $envelopeSha256,
+                    applicationSha256: $applicationSha256,
+                    qshellAbiSha256: $qshellAbiSha256
                   }' > "$core/core-manifest.json"
               '';
 
@@ -903,6 +970,7 @@
               cp "$core/microblossom_qshell_clock_div2.sv" "$hdl/"
               cp "$core/microblossom_qshell_envelope.sv" "$hdl/"
               cp "$core/microblossom_qshell_application.sv" "$hdl/"
+              cp "$core/microblossom_graph_identity.svh" "$hdl/"
               cp "$core/qshell_abi_generated.svh" "$hdl/"
               cp "$core/core-manifest.json" "$out/"
             '';
@@ -914,22 +982,48 @@
               rtl = mkGraphRtl spec fixture;
               core = mkGraphQshellCore spec rtl;
               hwSource = mkGraphQshellAppHwSource spec core;
+              applicationClockMHz = board: if board == "u280" then 250 else 333;
+              commonProvenance = board: {
+                application = "microblossom-host-driven";
+                graphFamily = spec.generatorVariant;
+                codeDistance = spec.distance;
+                physicalErrorRate = spec.physicalErrorRate;
+                maxHalfWeight = spec.maxHalfWeight;
+                measurementRounds = spec.measurementRounds;
+                graphSha256 = spec.graphSha256;
+                qshellRecordAbi = qshellAbiSpec.version;
+                mbqProtocol = 1;
+                applicationClockInputMHz = applicationClockMHz board;
+                acceleratorClockDivideBy = 2;
+              };
               mkApp =
                 board:
                 qshellLib.mkQshellAppPackage {
                   pname = "microblossom-${spec.id}-qshell-${board}-app";
                   inherit hwSource board;
-                  provenance = {
-                    application = "microblossom-host-driven";
-                    graphFamily = spec.generatorVariant;
-                    codeDistance = spec.distance;
-                    physicalErrorRate = spec.physicalErrorRate;
-                    maxHalfWeight = spec.maxHalfWeight;
-                    measurementRounds = spec.measurementRounds;
-                    graphSha256 = spec.graphSha256;
-                    qshellRecordAbi = qshellAbiSpec.version;
-                    mbqProtocol = 1;
-                    acceleratorClockDivideBy = 2;
+                  cmakeFlags = [ "-DSCLK_F:STRING=${toString (applicationClockMHz board)}" ];
+                  provenance = (commonProvenance board) // {
+                    deployment = "current-qshell";
+                  };
+                };
+              mkStandaloneApp =
+                board:
+                coyoteNix.lib.mkCoyoteShellPackage {
+                  inherit
+                    pkgs
+                    hwSource
+                    xilinxShareRoot
+                    board
+                    ;
+                  tools = coyoteTools;
+                  coyoteRoot = coyote;
+                  xilinxShell = doctor.xilinxShell;
+                  xilinxVersion = qshellLib.boards.${board}.xilinxVersion;
+                  pname = "microblossom-${spec.id}-standalone-coyote-${board}";
+                  cmakeFlags = [ "-DSCLK_F:STRING=${toString (applicationClockMHz board)}" ];
+                  provenance = (commonProvenance board) // {
+                    deployment = "standalone-coyote";
+                    residentService = null;
                   };
                 };
             in
@@ -945,6 +1039,10 @@
                 u280 = mkApp "u280";
                 v80 = mkApp "v80";
               };
+              standaloneApps = lib.optionalAttrs (builtins.elem spec.id matchedCircuitGraphIds) {
+                u280 = mkStandaloneApp "u280";
+                v80 = mkStandaloneApp "v80";
+              };
             };
 
           graphMatrix = lib.listToAttrs (
@@ -955,6 +1053,27 @@
             packages: entry:
             let
               prefix = "microblossom-${entry.spec.id}";
+              matchedPackages = lib.optionalAttrs (builtins.elem entry.spec.id matchedCircuitGraphIds) (
+                lib.foldl'
+                  (
+                    boardPackages: board:
+                    boardPackages
+                    // {
+                      "${prefix}-standalone-coyote-${board}-source" = entry.hwSource;
+                      "${prefix}-standalone-coyote-${board}-synth" =
+                        entry.standaloneApps.${board}.coyoteTwoStage.stages.synth;
+                      "${prefix}-standalone-coyote-${board}-implementation" = entry.standaloneApps.${board};
+                      "${prefix}-qshell-${board}-source" = entry.hwSource;
+                      "${prefix}-qshell-${board}-synth" = entry.apps.${board}.coyoteTwoStage.stages.synth;
+                      "${prefix}-qshell-${board}-implementation" = entry.apps.${board};
+                    }
+                  )
+                  { }
+                  [
+                    "u280"
+                    "v80"
+                  ]
+              );
             in
             packages
             // {
@@ -967,6 +1086,7 @@
               "${prefix}-qshell-v80-app" = entry.apps.v80;
               "${prefix}-qshell-v80-app-synth" = entry.apps.v80.coyoteTwoStage.stages.synth;
             }
+            // matchedPackages
           ) { } (lib.attrValues graphMatrix);
 
           r5PlatformContract = {
@@ -1448,6 +1568,7 @@
           qshellContractSource = qshell.lib.${system}.qshellContractSource;
           qshellAbiSpec = builtins.fromJSON (builtins.readFile "${qshellContractSource}/abi/qshell-abi.json");
           graphSpecs = import ./nix/microblossom-graph-specs.nix;
+          packageSet = self.packages.${system};
           graphOutputNames = lib.concatMap (
             spec:
             let
@@ -1464,9 +1585,93 @@
               "${prefix}-qshell-v80-app-synth"
             ]
           ) graphSpecs;
-          graphOutputsPresent = lib.all (
-            name: builtins.hasAttr name self.packages.${system}
-          ) graphOutputNames;
+          graphOutputsPresent = lib.all (name: builtins.hasAttr name packageSet) graphOutputNames;
+          matchedCircuitContracts =
+            map
+              (
+                contract:
+                contract
+                // {
+                  spec = lib.findFirst (
+                    spec: spec.id == contract.id
+                  ) (throw "missing matched MicroBlossom graph spec: ${contract.id}") graphSpecs;
+                }
+              )
+              [
+                {
+                  id = "circuit-level-d3";
+                  graphSha256 = "3e6bfdfeb3cfdb3d47bf29c5da334d84849aacfc548e0145b8db60d7f992b019";
+                  graphIdSystemVerilogLiteral = "256'h19b092f9d760dbb845018e54fcac9a84844d33dac529bf473ddbcfb3fefd6b3e";
+                }
+                {
+                  id = "circuit-level-d9";
+                  graphSha256 = "9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a";
+                  graphIdSystemVerilogLiteral = "256'h1aa4bb9968d8775ff6534fe8f889ff36df9072caa7e176eaa7729c53c0b18295";
+                }
+              ];
+          matchedCircuitBoards = [
+            "u280"
+            "v80"
+          ];
+          matchedCircuitModes = [
+            "standalone-coyote"
+            "qshell"
+          ];
+          matchedCircuitStages = [
+            "source"
+            "synth"
+            "implementation"
+          ];
+          matchedCircuitOutputNames = lib.concatMap (
+            contract:
+            lib.concatMap (
+              board:
+              lib.concatMap (
+                mode: map (stage: "microblossom-${contract.id}-${mode}-${board}-${stage}") matchedCircuitStages
+              ) matchedCircuitModes
+            ) matchedCircuitBoards
+          ) matchedCircuitContracts;
+          matchedCircuitOutputsPresent = lib.all (
+            name: builtins.hasAttr name packageSet
+          ) matchedCircuitOutputNames;
+          matchedCircuitPackageContractValid = lib.all (
+            contract:
+            let
+              prefix = "microblossom-${contract.id}";
+              canonicalSource = packageSet."${prefix}-qshell-app-hw-source";
+            in
+            contract.spec.graphSha256 == contract.graphSha256
+            && graphSha256ToSystemVerilogLiteral contract.graphSha256 == contract.graphIdSystemVerilogLiteral
+            && lib.all (
+              board:
+              let
+                standaloneSource = packageSet."${prefix}-standalone-coyote-${board}-source";
+                standaloneSynth = packageSet."${prefix}-standalone-coyote-${board}-synth";
+                standaloneImplementation = packageSet."${prefix}-standalone-coyote-${board}-implementation";
+                standaloneContract = standaloneImplementation.coyoteTwoStage;
+                qshellSource = packageSet."${prefix}-qshell-${board}-source";
+                qshellSynth = packageSet."${prefix}-qshell-${board}-synth";
+                qshellImplementation = packageSet."${prefix}-qshell-${board}-implementation";
+                qshellContract = qshellImplementation.coyoteTwoStage;
+                expectedClock = if board == "u280" then "250" else "333";
+              in
+              standaloneSource.outPath == canonicalSource.outPath
+              && qshellSource.outPath == canonicalSource.outPath
+              && standaloneContract.kind == "shell"
+              && qshellContract.kind == "app"
+              && standaloneContract.board == board
+              && qshellContract.board == board
+              && standaloneContract.hardwareSource == qshellContract.hardwareSource
+              && standaloneContract.hardwareSource == canonicalSource.outPath
+              && standaloneContract.coyoteSource == qshellContract.coyoteSource
+              && standaloneSynth.outPath == standaloneContract.stages.synth.outPath
+              && qshellSynth.outPath == qshellContract.stages.synth.outPath
+              && qshellImplementation.outPath == packageSet."${prefix}-qshell-${board}-app".outPath
+              && qshellContract.shellPackage.outPath == qshellLib.shellPackages.${board}.outPath
+              && builtins.elem "-DSCLK_F:STRING=${expectedClock}" standaloneContract.shellCmakeFlags
+              && builtins.elem "-DSCLK_F:STRING=${expectedClock}" qshellContract.appCmakeFlags
+            ) matchedCircuitBoards
+          ) matchedCircuitContracts;
         in
         {
           formatting = (treefmtEval system).config.build.check self;
@@ -1491,6 +1696,98 @@
               ' specs.json >/dev/null
               cp specs.json "$out"
             '';
+          matched-circuit-package-contract =
+            assert matchedCircuitOutputsPresent;
+            assert matchedCircuitPackageContractValid;
+            assert qshellLib.applicationContract.recordAbi == qshellAbiSpec.version;
+            pkgs.runCommand "microblossom-matched-circuit-package-contract"
+              {
+                nativeBuildInputs = [
+                  pkgs.coreutils
+                  pkgs.jq
+                ];
+              }
+              ''
+                mkdir -p "$out/manifests"
+                cat > "$out/targets.json" <<'EOF'
+                ${builtins.toJSON matchedCircuitOutputNames}
+                EOF
+
+                ${lib.concatMapStringsSep "\n" (
+                  contract:
+                  let
+                    source = packageSet."microblossom-${contract.id}-qshell-u280-source";
+                    graph = packageSet."microblossom-${contract.id}-graph";
+                  in
+                  ''
+                    source=${source}
+                    graph=${graph}/share/microblossom/fixtures/${contract.id}-v1/graph.json
+                    hdl="$source/src/microblossom/hdl"
+                    manifest="$source/core-manifest.json"
+                    identity="$hdl/microblossom_graph_identity.svh"
+
+                    test "$(sha256sum "$graph" | cut -d' ' -f1)" = '${contract.graphSha256}'
+                    test -s "$source/CMakeLists.txt"
+                    test -s "$source/src/microblossom/vfpga_top.svh"
+                    test -s "$source/src/microblossom/microblossom_qshell_timing.xdc"
+                    test -s "$identity"
+                    test -s "$hdl/MicroBlossomBus.v"
+                    test -s "$hdl/microblossom_qshell_frontend.sv"
+                    test -s "$hdl/microblossom_qshell_clock_div2.sv"
+                    test -s "$hdl/microblossom_qshell_envelope.sv"
+
+                    grep -F '`include "hdl/microblossom_graph_identity.svh"' \
+                      "$source/src/microblossom/vfpga_top.svh" >/dev/null
+                    grep -F '.GRAPH_ID(MICROBLOSSOM_GRAPH_ID)' \
+                      "$source/src/microblossom/vfpga_top.svh" >/dev/null
+                    if grep -F 'MICROBLOSSOM_D3_GRAPH_ID' \
+                        "$source/src/microblossom/vfpga_top.svh"; then
+                      echo 'vFPGA wrapper retains the fixed d3 graph identity' >&2
+                      exit 1
+                    fi
+                    grep -F "${contract.graphIdSystemVerilogLiteral};" "$identity" >/dev/null
+                    if grep -F 'register_dynamic_service(' "$source/CMakeLists.txt"; then
+                      echo 'standalone decoder source unexpectedly registers a resident service' >&2
+                      exit 1
+                    fi
+
+                    jq -e \
+                      --arg fixture '${contract.id}-v1' \
+                      --arg graph '${contract.graphSha256}' \
+                      --arg literal "${contract.graphIdSystemVerilogLiteral}" \
+                      --arg qshellRevision '${qshell.rev}' \
+                      '.fixtureId == $fixture
+                       and .graphSha256 == $graph
+                       and .graphIdentity.algorithm == "sha256"
+                       and .graphIdentity.wireByteOrder == "digest-order"
+                       and .graphIdentity.packedBitOrder == "byte-0-in-bits-7:0"
+                       and .graphIdentity.systemVerilogLiteral == $literal
+                       and .protocol == "MBQ1"
+                       and .protocolVersion == 1
+                       and .internalRecordBytes == 64
+                       and .outerQshellEnvelope == "QShell ABI 2"
+                       and .outerQshellRequestBeats == 2
+                       and .outerQshellResponseBeats == 2
+                       and .applicationClockInputMHz == {"u280": 250, "v80": 333}
+                       and .acceleratorClockDivideBy == 2
+                       and .applicationClockStrategy == "BUFGCE_DIV/2"
+                       and .qshellRevision == $qshellRevision' \
+                      "$manifest" >/dev/null
+
+                    test "$(sha256sum "$hdl/MicroBlossomBus.v" | cut -d' ' -f1)" = \
+                      "$(jq -er '.acceleratorRtlSha256' "$manifest")"
+                    test "$(sha256sum "$hdl/microblossom_qshell_frontend.sv" | cut -d' ' -f1)" = \
+                      "$(jq -er '.frontendSha256' "$manifest")"
+                    test "$(sha256sum "$hdl/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
+                      "$(jq -er '.clockDividerSha256' "$manifest")"
+                    test "$(sha256sum "$hdl/microblossom_qshell_envelope.sv" | cut -d' ' -f1)" = \
+                      "$(jq -er '.envelopeSha256' "$manifest")"
+                    test "$(sha256sum "$identity" | cut -d' ' -f1)" = \
+                      "$(jq -er '.graphIdentity.sourceSha256' "$manifest")"
+                    cp "$manifest" "$out/manifests/${contract.id}.json"
+                  ''
+                ) matchedCircuitContracts}
+              '';
           qshell-protocol = self.packages.${system}.microblossom-qshell-protocol;
           qshell-u280-xdb-d3 =
             pkgs.runCommand "microblossom-d3-qshell-u280-xdb-check"
@@ -1821,6 +2118,7 @@
                 test ! -e "$app/microblossom_qshell_application.sv"
                 for source in \
                   MicroBlossomBus.v \
+                  microblossom_graph_identity.svh \
                   microblossom_qshell_frontend.sv \
                   microblossom_qshell_core.sv \
                   microblossom_qshell_clock_div2.sv \

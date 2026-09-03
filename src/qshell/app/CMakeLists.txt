@@ -9,7 +9,7 @@ list(APPEND CMAKE_MODULE_PATH "${CYT_DIR}/cmake")
 find_package(CoyoteHW REQUIRED)
 
 project(microblossom-qshell-app)
-message("*** MicroBlossom d3 QShell ABI-2 application ***")
+message("*** MicroBlossom host-driven current-QSH2 application ***")
 
 set(EN_STRM 1)
 set(N_STRM_AXI 1)
