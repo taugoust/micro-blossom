@@ -1019,6 +1019,73 @@
             map (spec: lib.nameValuePair spec.id (mkGraphEntry spec)) graphSpecs
           );
 
+          circuitD9V80PhysicalProfiles = {
+            congestionSpread = {
+              id = "congestion-spread";
+              pname = "microblossom-circuit-level-d9-qshell-v80-app-congestion-spread-strict";
+              intent = "spread-placement-to-reduce-congestion";
+              stageStrategies = {
+                place = "SSI_SpreadLogic_high";
+                physOpt = "Explore";
+                route = "AggressiveExplore";
+              };
+            };
+            timingDriven = {
+              id = "timing-driven";
+              pname = "microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict";
+              intent = "prioritize-net-delay-and-timing-closure";
+              stageStrategies = {
+                place = "ExtraNetDelay_high";
+                physOpt = "AggressiveFanoutOpt";
+                route = "NoTimingRelaxation";
+              };
+            };
+          };
+
+          mkCircuitD9V80PhysicalApp =
+            profile:
+            let
+              entry = graphMatrix."circuit-level-d9";
+              inherit (entry) spec hwSource;
+              profileManifest = {
+                api = "microblossom.v80-physical-profile/v1";
+                inherit (profile) id intent stageStrategies;
+              };
+              app = qshellLib.mkQshellAppPackage {
+                inherit (profile) pname;
+                inherit hwSource;
+                board = "v80";
+                cmakeFlags = [ "-DEN_TIMING_CHECK:BOOL=ON" ];
+                provenance = {
+                  application = "microblossom-host-driven";
+                  graphFamily = spec.generatorVariant;
+                  codeDistance = spec.distance;
+                  physicalErrorRate = spec.physicalErrorRate;
+                  maxHalfWeight = spec.maxHalfWeight;
+                  measurementRounds = spec.measurementRounds;
+                  graphSha256 = spec.graphSha256;
+                  qshellRecordAbi = qshellAbiSpec.version;
+                  mbqProtocol = 1;
+                  acceleratorClockDivideBy = 2;
+                  acceleratorTiming = graphTiming spec;
+                  physicalProfile = profileManifest;
+                };
+                implementation = {
+                  enforceTiming = true;
+                  directives = profile.stageStrategies;
+                };
+              };
+            in
+            app.overrideAttrs (old: {
+              passthru = (old.passthru or { }) // {
+                microblossomPhysicalProfile = profileManifest;
+              };
+            });
+
+          circuitD9V80PhysicalApps = lib.mapAttrs (
+            _name: profile: mkCircuitD9V80PhysicalApp profile
+          ) circuitD9V80PhysicalProfiles;
+
           graphMatrixPackages = lib.foldl' (
             packages: entry:
             let
@@ -1472,6 +1539,10 @@
           microblossom-d3-v80-r5-firmware = r5ServiceFirmware;
           microblossom-d3-qshell-u280-app-synth = d3QshellApps.u280.coyoteTwoStage.stages.synth;
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
+          microblossom-circuit-level-d9-qshell-v80-app-congestion-spread-strict =
+            circuitD9V80PhysicalApps.congestionSpread;
+          microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict =
+            circuitD9V80PhysicalApps.timingDriven;
           microblossom-d3-qshell-v80-coprocessor-app-synth =
             d3QshellCoprocessorApp.coyoteTwoStage.stages.synth;
           update-qshell-abi = updateQshellAbi;
@@ -1503,6 +1574,11 @@
           circuitD9Fixture = self.packages.${system}.microblossom-circuit-level-d9-graph;
           circuitD9Rtl = self.packages.${system}.microblossom-circuit-level-d9-rtl;
           circuitD9Core = self.packages.${system}.microblossom-circuit-level-d9-qshell-core;
+          circuitD9V80Default = self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-app;
+          circuitD9V80CongestionSpread =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-app-congestion-spread-strict;
+          circuitD9V80TimingDriven =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
@@ -1766,6 +1842,69 @@
                   | tee "$out/generated-topology.log"
                 verilator --version > "$out/verilator-version.txt"
               '';
+          circuit-d9-v80-physical-profiles =
+            let
+              profiles = [
+                circuitD9V80CongestionSpread
+                circuitD9V80TimingDriven
+              ];
+              fullGraphIsStrict =
+                package:
+                let
+                  contract = package.coyoteTwoStage;
+                  finalContext = builtins.getContext package.buildPhase;
+                  references =
+                    dependency: builtins.hasAttr (builtins.unsafeDiscardStringContext dependency.drvPath) finalContext;
+                in
+                contract.kind == "app"
+                && contract.board == "v80"
+                && contract.xilinxVersion == "2025.1"
+                && contract.hardwareSource == circuitD9V80Default.coyoteTwoStage.hardwareSource
+                && contract.shellPackage == circuitD9V80Default.coyoteTwoStage.shellPackage
+                && contract.expectedBitstreams == [ "config_0/vfpga_c0_0.pdi" ]
+                && builtins.elem "-DEN_TIMING_CHECK:BOOL=ON" contract.appCmakeFlags
+                && lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1" contract.stages.validate.buildPhase
+                && lib.hasInfix "shell_drc_bitstream_checks_c0.rpt" contract.stages.validate.buildPhase
+                && contract.stages.routed.drvPath == contract.stages.validationGate.drvPath
+                && references contract.stages.validate
+                && references contract.stages.validationGate;
+              profileStrategiesMatch =
+                package:
+                let
+                  profile = package.microblossomPhysicalProfile;
+                  directives = package.coyoteTwoStage.physical.directives;
+                in
+                profile.api == "microblossom.v80-physical-profile/v1"
+                &&
+                  profile.stageStrategies == {
+                    inherit (directives) place physOpt route;
+                  };
+            in
+            assert circuitD9V80Default.pname == "microblossom-circuit-level-d9-qshell-v80-app";
+            assert !(circuitD9V80Default ? microblossomPhysicalProfile);
+            assert
+              circuitD9V80CongestionSpread.pname
+              == "microblossom-circuit-level-d9-qshell-v80-app-congestion-spread-strict";
+            assert
+              circuitD9V80TimingDriven.pname
+              == "microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict";
+            assert lib.all fullGraphIsStrict profiles;
+            assert lib.all profileStrategiesMatch profiles;
+            assert circuitD9V80CongestionSpread.microblossomPhysicalProfile.id == "congestion-spread";
+            assert circuitD9V80TimingDriven.microblossomPhysicalProfile.id == "timing-driven";
+            assert
+              circuitD9V80CongestionSpread.coyoteTwoStage.physical.directives.place == "SSI_SpreadLogic_high";
+            assert circuitD9V80CongestionSpread.coyoteTwoStage.physical.directives.physOpt == "Explore";
+            assert circuitD9V80CongestionSpread.coyoteTwoStage.physical.directives.route == "AggressiveExplore";
+            assert circuitD9V80TimingDriven.coyoteTwoStage.physical.directives.place == "ExtraNetDelay_high";
+            assert circuitD9V80TimingDriven.coyoteTwoStage.physical.directives.physOpt == "AggressiveFanoutOpt";
+            assert circuitD9V80TimingDriven.coyoteTwoStage.physical.directives.route == "NoTimingRelaxation";
+            assert circuitD9V80Default.drvPath != circuitD9V80CongestionSpread.drvPath;
+            assert circuitD9V80Default.drvPath != circuitD9V80TimingDriven.drvPath;
+            assert circuitD9V80CongestionSpread.drvPath != circuitD9V80TimingDriven.drvPath;
+            pkgs.runCommand "microblossom-circuit-d9-v80-physical-profiles" { } ''
+              touch "$out"
+            '';
           graph-matrix-contract =
             assert builtins.length graphSpecs == 34;
             assert builtins.length (lib.unique (map (spec: spec.id) graphSpecs)) == 34;
