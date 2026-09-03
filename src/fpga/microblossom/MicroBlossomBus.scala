@@ -928,6 +928,7 @@ class MicroBlossomBusGeneratorConf(arguments: Seq[String]) extends ScallopConf(a
   // DualConfig
   val broadcastDelay = opt[Int](default = Some(0))
   val convergecastDelay = opt[Int](default = Some(1))
+  val maxGrowablePipelineLatency = opt[Int](default = Some(0))
   val contextDepth = opt[Int](default = Some(1), descr = "how many contexts supported")
   val conflictChannels = opt[Int](default = Some(1), descr = "how many conflicts are reported at once")
   val dynamicWeights = opt[Boolean](default = Some(false), descr = "by default hard code the edge weights")
@@ -947,6 +948,7 @@ class MicroBlossomBusGeneratorConf(arguments: Seq[String]) extends ScallopConf(a
     filename = graph(),
     broadcastDelay = broadcastDelay(),
     convergecastDelay = convergecastDelay(),
+    maxGrowablePipelineLatency = maxGrowablePipelineLatency(),
     contextDepth = contextDepth(),
     conflictChannels = conflictChannels(),
     hardCodeWeights = !dynamicWeights(),

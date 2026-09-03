@@ -707,6 +707,38 @@
           };
 
           graphSpecs = import ./nix/microblossom-graph-specs.nix;
+          graphTiming =
+            spec:
+            let
+              isCircuitD9 = spec.id == "circuit-level-d9";
+              injectedRegisters = lib.optionals isCircuitD9 [
+                "execute2"
+                "update"
+              ];
+              maxGrowablePipelineLatency = if isCircuitD9 then 2 else 0;
+              executeLatency = builtins.length injectedRegisters;
+              convergecastDelay = 1;
+            in
+            {
+              inherit
+                convergecastDelay
+                executeLatency
+                injectedRegisters
+                maxGrowablePipelineLatency
+                ;
+              broadcastDelay = 0;
+              readLatency = executeLatency + maxGrowablePipelineLatency + convergecastDelay;
+              initiationInterval = 1;
+              executionCutPayload = lib.optionals isCircuitD9 [
+                "state"
+                "compactCommand"
+                "valid"
+                "context"
+                "stall"
+                "propagation"
+              ];
+              maxGrowablePipelineFanIn = if isCircuitD9 then 16 else null;
+            };
 
           mkGraphFixture =
             spec:
@@ -773,6 +805,9 @@
 
           mkGraphRtl =
             spec: fixture:
+            let
+              timing = graphTiming spec;
+            in
             pkgs.runCommand "microblossom-${spec.id}-rtl-v1"
               {
                 nativeBuildInputs = [
@@ -794,10 +829,14 @@
                   --bus-type Axi4 \
                   --language-hdl verilog \
                   --base-address 0 \
-                  --broadcast-delay 0 \
-                  --convergecast-delay 1 \
+                  --broadcast-delay ${toString timing.broadcastDelay} \
+                  --convergecast-delay ${toString timing.convergecastDelay} \
+                  --max-growable-pipeline-latency ${toString timing.maxGrowablePipelineLatency} \
                   --context-depth 1 \
                   --conflict-channels 1 \
+                  ${lib.optionalString (
+                    timing.injectedRegisters != [ ]
+                  ) "--inject-registers ${lib.escapeShellArgs timing.injectedRegisters} \\"}
                   --clock-divide-by 2
 
                 test -s "$TMPDIR/generated/MicroBlossomBus.v"
@@ -811,6 +850,7 @@
                   --arg graphSha256 ${spec.graphSha256} \
                   --arg rtlSha256 "$(sha256sum "$rtl/MicroBlossomBus.v" | cut -d' ' -f1)" \
                   --arg generatorJarSha256 "$(sha256sum ${microblossomScala}/share/java/microblossom.jar | cut -d' ' -f1)" \
+                  --argjson timing '${builtins.toJSON timing}' \
                   '{
                     schemaVersion: 1,
                     fixtureId: $fixtureId,
@@ -818,12 +858,16 @@
                     busType: "Axi4",
                     graphSha256: $graphSha256,
                     rtlSha256: $rtlSha256,
-                    generatorJarSha256: $generatorJarSha256
+                    generatorJarSha256: $generatorJarSha256,
+                    timing: $timing
                   }' > "$rtl/rtl-manifest.json"
               '';
 
           mkGraphQshellCore =
             spec: rtl:
+            let
+              timing = graphTiming spec;
+            in
             pkgs.runCommand "microblossom-${spec.id}-qshell-core-v1"
               {
                 nativeBuildInputs = [
@@ -861,6 +905,7 @@
                   --arg graphSha256 ${spec.graphSha256} \
                   --arg acceleratorRtlSha256 "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
+                  --argjson acceleratorTiming '${builtins.toJSON timing}' \
                   '{
                     schemaVersion: 1,
                     fixtureId: $fixtureId,
@@ -880,6 +925,7 @@
                     acceleratorClockDivideBy: 2,
                     acceleratorClockInput: "slow_clk",
                     acceleratorClockStrategy: "BUFGCE_DIV/2",
+                    acceleratorTiming: $acceleratorTiming,
                     outerQshellEnvelope: "QShell ABI 2",
                     outerQshellRequestBeats: 2,
                     outerQshellResponseBeats: 2,
@@ -930,6 +976,7 @@
                     qshellRecordAbi = qshellAbiSpec.version;
                     mbqProtocol = 1;
                     acceleratorClockDivideBy = 2;
+                    acceleratorTiming = graphTiming spec;
                   };
                 };
             in
@@ -1430,7 +1477,11 @@
           verilator_5_014 = mkVerilator_5_014 pkgs;
           host = self.packages.${system}.microblossom-host;
           fixture = self.packages.${system}.microblossom-d3-graph;
+          circuitD3Fixture = self.packages.${system}.microblossom-circuit-level-d3-graph;
+          circuitD3Rtl = self.packages.${system}.microblossom-circuit-level-d3-rtl;
           circuitD9Fixture = self.packages.${system}.microblossom-circuit-level-d9-graph;
+          circuitD9Rtl = self.packages.${system}.microblossom-circuit-level-d9-rtl;
+          circuitD9Core = self.packages.${system}.microblossom-circuit-level-d9-qshell-core;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
@@ -1485,15 +1536,104 @@
                 set -o pipefail
                 mkdir -p "$out" "$TMPDIR/home"
                 export HOME="$TMPDIR/home"
+                export MICROBLOSSOM_CIRCUIT_D3_GRAPH=${circuitD3Fixture}/share/microblossom/fixtures/circuit-level-d3-v1/graph.json
                 export MICROBLOSSOM_CIRCUIT_D9_GRAPH=${circuitD9Fixture}/share/microblossom/fixtures/circuit-level-d9-v1/graph.json
                 cd "$TMPDIR"
-                timeout 600 java -Xmx4G \
+                timeout 900 java -Xmx8G \
                   -cp ${scala}/share/java/microblossom.jar \
                   org.scalatest.tools.Runner \
                   -oD -s microblossom.modules.MaxGrowableReductionTest \
                   | tee "$out/test.log"
                 grep -F 'All tests passed.' "$out/test.log" >/dev/null
                 verilator --version > "$out/verilator-version.txt"
+              '';
+          max-growable-generated-registers =
+            pkgs.runCommand "microblossom-max-growable-generated-registers-check"
+              {
+                nativeBuildInputs = [
+                  pkgs.jq
+                  pkgs.python3
+                ];
+              }
+              ''
+                d3=${circuitD3Rtl}/share/microblossom/rtl/circuit-level-d3-v1
+                d9=${circuitD9Rtl}/share/microblossom/rtl/circuit-level-d9-v1
+                d9_core=${circuitD9Core}/share/microblossom/qshell-core/circuit-level-d9-v1
+
+                jq -e '
+                  .timing.broadcastDelay == 0 and
+                  .timing.convergecastDelay == 1 and
+                  .timing.injectedRegisters == [] and
+                  .timing.executeLatency == 0 and
+                  .timing.maxGrowablePipelineLatency == 0 and
+                  .timing.readLatency == 1 and
+                  .timing.initiationInterval == 1
+                ' "$d3/rtl-manifest.json" >/dev/null
+                jq -e '
+                  .timing.broadcastDelay == 0 and
+                  .timing.convergecastDelay == 1 and
+                  .timing.injectedRegisters == ["execute2", "update"] and
+                  .timing.executeLatency == 2 and
+                  .timing.maxGrowablePipelineLatency == 2 and
+                  .timing.maxGrowablePipelineFanIn == 16 and
+                  .timing.readLatency == 5 and
+                  .timing.initiationInterval == 1 and
+                  .timing.executionCutPayload == [
+                    "state", "compactCommand", "valid", "context", "stall", "propagation"
+                  ]
+                ' "$d9/rtl-manifest.json" >/dev/null
+                jq -e --slurp '
+                  .[1].acceleratorTiming == .[0].timing and
+                  .[1].acceleratorClockDivideBy == 2
+                ' "$d9/rtl-manifest.json" "$d9_core/core-manifest.json" >/dev/null
+
+                D3_RTL="$d3/MicroBlossomBus.v" \
+                D9_RTL="$d9/MicroBlossomBus.v" \
+                  python3 - <<'PY'
+                import os
+                import re
+                from pathlib import Path
+
+                d3 = Path(os.environ["D3_RTL"]).read_text()
+                d9 = Path(os.environ["D9_RTL"]).read_text()
+                if "maxGrowablePipeline_" in d3 or "pipelineAfter_execute2" in d3 or "pipelineAfter_update" in d3:
+                    raise SystemExit("circuit d3 unexpectedly contains circuit d9 pipeline registers")
+
+                def register_indices(stage: int) -> set[int]:
+                    return {
+                        int(index)
+                        for index in re.findall(
+                            rf"maxGrowablePipeline_{stage}_(\d+)_length", d9
+                        )
+                    }
+
+                if register_indices(0) != set(range(256)):
+                    raise SystemExit("first max-growable boundary is not 256 complete ordered candidates")
+                if register_indices(1) != set(range(16)):
+                    raise SystemExit("second max-growable boundary is not 16 complete ordered candidates")
+
+                required_stage_fields = (
+                    "pipelineAfter_execute2_state",
+                    "pipelineAfter_execute2_compact_valid",
+                    "pipelineAfter_execute2_compact_isReset",
+                    "pipelineAfter_execute2_isStalled",
+                    "pipelineAfter_update_state",
+                    "pipelineAfter_update_compact_valid",
+                    "pipelineAfter_update_compact_isReset",
+                    "pipelineAfter_update_isStalled",
+                    "pipelineAfter_update_propagatingPeer",
+                )
+                missing = [field for field in required_stage_fields if field not in d9]
+                if missing:
+                    raise SystemExit(f"generated circuit d9 is missing pipeline payload fields: {missing}")
+                if "pipelineAfter_offload3" in d9:
+                    raise SystemExit("generated circuit d9 contains an unconfigured offload3 cut")
+                PY
+
+                mkdir -p "$out"
+                cp "$d3/rtl-manifest.json" "$out/circuit-d3-rtl-manifest.json"
+                cp "$d9/rtl-manifest.json" "$out/circuit-d9-rtl-manifest.json"
+                cp "$d9_core/core-manifest.json" "$out/circuit-d9-core-manifest.json"
               '';
           graph-matrix-contract =
             assert builtins.length graphSpecs == 34;

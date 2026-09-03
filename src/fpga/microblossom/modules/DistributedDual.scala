@@ -35,10 +35,59 @@ object DistributedDual {
     leaves.toIndexedSeq
   }
 
+  private[modules] val MaxGrowablePipelineFanIn = 16
+
   private[modules] def reduceMaxGrowable[T <: Data](candidates: Seq[T])(lengthOf: T => UInt): T = {
     require(candidates.nonEmpty)
     candidates.reduceBalancedTree { (left, right) =>
       Mux(lengthOf(left) < lengthOf(right), left, right)
+    }
+  }
+
+  private[modules] def contiguousGroups[T](values: IndexedSeq[T], groupCount: Int): IndexedSeq[IndexedSeq[T]] = {
+    require(values.nonEmpty)
+    require(groupCount > 0 && groupCount <= values.length)
+    (0 until groupCount).map { index =>
+      val from = index * values.length / groupCount
+      val until = (index + 1) * values.length / groupCount
+      values.slice(from, until)
+    }
+  }
+
+  private[modules] def reduceMaxGrowablePipelined[T <: Data](
+      candidates: IndexedSeq[T],
+      pipelineLatency: Int
+  )(lengthOf: T => UInt): T = {
+    require(candidates.nonEmpty)
+    require(pipelineLatency >= 0)
+    if (pipelineLatency == 0) {
+      reduceMaxGrowable(candidates)(lengthOf)
+    } else {
+      val firstBoundaryCapacity = (0 until pipelineLatency).foldLeft(1) { (capacity, _) =>
+        Math.multiplyExact(capacity, MaxGrowablePipelineFanIn)
+      }
+      val totalCapacity = Math.multiplyExact(firstBoundaryCapacity, MaxGrowablePipelineFanIn)
+      require(
+        candidates.length <= totalCapacity,
+        s"${candidates.length} max-growable candidates exceed the $totalCapacity-candidate pipeline capacity"
+      )
+
+      var level = contiguousGroups(candidates, Math.min(candidates.length, firstBoundaryCapacity))
+        .map(group => reduceMaxGrowable(group)(lengthOf))
+      for (stage <- 0 until pipelineLatency) {
+        if (stage > 0) {
+          level = level
+            .grouped(MaxGrowablePipelineFanIn)
+            .map(group => reduceMaxGrowable(group.toIndexedSeq)(lengthOf))
+            .toIndexedSeq
+        }
+        level = level.zipWithIndex.map { case (candidate, index) =>
+          val registered = RegNext(candidate)
+          registered.setName(s"maxGrowablePipeline_${stage}_$index")
+          registered
+        }
+      }
+      reduceMaxGrowable(level)(lengthOf)
     }
   }
 }
@@ -121,7 +170,10 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
     .maxGrowableLeafIndicesInOrder(config.graph.vertex_edge_binary_tree)
     .map(index => maxGrowableCandidates(index))
   val selectedMaxGrowable = Delay(
-    DistributedDual.reduceMaxGrowable(maxGrowableInOrder)(_.length),
+    DistributedDual.reduceMaxGrowablePipelined(
+      maxGrowableInOrder,
+      config.maxGrowablePipelineLatency
+    )(_.length),
     config.convergecastDelay
   )
   io.maxGrowable.resizedFrom(selectedMaxGrowable)
@@ -143,8 +195,10 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
       }
     }
   }
-  val convergecastedConflict =
-    Delay(conflictConvergecastTree(config.graph.edge_binary_tree.nodes.length - 1), config.convergecastDelay)
+  val convergecastedConflict = Delay(
+    conflictConvergecastTree(config.graph.edge_binary_tree.nodes.length - 1),
+    config.maxGrowablePipelineLatency + config.convergecastDelay
+  )
   io.conflict.resizedFrom(convergecastedConflict)
 
   // build convergecast tree of parity reporter
@@ -158,7 +212,10 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
       }
     }
     val parityReport = parities.reduceBalancedTree(_ ^ _) // XOR
-    io.parityReports(index) := Delay(parityReport, config.convergecastDelay)
+    io.parityReports(index) := Delay(
+      parityReport,
+      config.maxGrowablePipelineLatency + config.convergecastDelay
+    )
   }
 
   def simExecute(instruction: Long): (DataMaxGrowable, DataConflictRaw) = {
@@ -367,7 +424,11 @@ private[modules] case class TaggedMaxGrowable(weightBits: Int, sourceBits: Int) 
   val source = UInt(sourceBits bits)
 }
 
-private[modules] case class MaxGrowableReductionHarness(candidateCount: Int, weightBits: Int) extends Component {
+private[modules] case class MaxGrowableReductionHarness(
+    candidateCount: Int,
+    weightBits: Int,
+    pipelineLatency: Int
+) extends Component {
   private val sourceBits = log2Up(candidateCount)
 
   val io = new Bundle {
@@ -382,7 +443,10 @@ private[modules] case class MaxGrowableReductionHarness(candidateCount: Int, wei
     candidate.source := U(index, sourceBits bits)
     candidate
   }
-  val selected = DistributedDual.reduceMaxGrowable(candidates)(_.length)
+  val selected = DistributedDual.reduceMaxGrowablePipelined(
+    candidates.toIndexedSeq,
+    pipelineLatency
+  )(_.length)
   io.selectedLength := selected.length
   io.selectedSource := selected.source
 }
@@ -390,13 +454,30 @@ private[modules] case class MaxGrowableReductionHarness(candidateCount: Int, wei
 class MaxGrowableReductionTest extends AnyFunSuite {
   private case class ModelCandidate(length: Int, source: Int)
 
-  private val candidateCount = 49
-  private val weightBits = 8
-  private lazy val compiledReduction = SimConfig
+  private val weightBits = 5
+
+  private def graphConfig(environmentName: String): DualConfig = {
+    val graphPath = sys.env.getOrElse(
+      environmentName,
+      fail(s"$environmentName must name a circuit-level graph")
+    )
+    DualConfig(filename = graphPath)
+  }
+
+  private lazy val circuitD3 = graphConfig("MICROBLOSSOM_CIRCUIT_D3_GRAPH")
+  private lazy val circuitD9 = graphConfig("MICROBLOSSOM_CIRCUIT_D9_GRAPH")
+
+  private lazy val compiledD3 = SimConfig
     .withConfig(Config.spinal())
-    .workspaceName("max-growable-reduction")
+    .workspaceName("max-growable-circuit-d3")
     .allOptimisation
-    .compile(MaxGrowableReductionHarness(candidateCount, weightBits))
+    .compile(MaxGrowableReductionHarness(circuitD3.vertexNum + circuitD3.edgeNum, weightBits, 0))
+
+  private lazy val compiledD9 = SimConfig
+    .withConfig(Config.spinal())
+    .workspaceName("max-growable-circuit-d9-pipelined")
+    .allOptimisation
+    .compile(MaxGrowableReductionHarness(circuitD9.vertexNum + circuitD9.edgeNum, weightBits, 2))
 
   private def select(left: ModelCandidate, right: ModelCandidate): ModelCandidate = {
     if (left.length < right.length) left else right
@@ -421,58 +502,116 @@ class MaxGrowableReductionTest extends AnyFunSuite {
     }
   }
 
-  test("balanced RTL reduction matches the in-order fold") {
-    compiledReduction.doSim("randomized") { dut =>
-      val random = new scala.util.Random(0x5eedc0deL)
-      for (_ <- 0 until 4096) {
-        val values = IndexedSeq.fill(candidateCount)(random.nextInt(1 << weightBits))
-        values.zipWithIndex.foreach { case (value, index) => dut.io.lengths(index) #= value }
-        sleep(1)
-
-        val reference = expected(values)
-        assert(dut.io.selectedLength.toInt == reference.length)
-        assert(dut.io.selectedSource.toInt == reference.source)
-      }
-    }
-  }
-
-  test("balanced RTL reduction selects the rightmost equal candidate") {
-    compiledReduction.doSim("ties") { dut =>
-      def check(values: IndexedSeq[Int], expectedSource: Int): Unit = {
-        values.zipWithIndex.foreach { case (value, index) => dut.io.lengths(index) #= value }
-        sleep(1)
-        assert(dut.io.selectedLength.toInt == values(expectedSource))
-        assert(dut.io.selectedSource.toInt == expectedSource)
-      }
-
-      check(IndexedSeq.fill(candidateCount)(7), candidateCount - 1)
-      check(IndexedSeq.tabulate(candidateCount)(index => if (Set(0, 17, 48).contains(index)) 1 else 9), 48)
-      check(IndexedSeq.tabulate(candidateCount)(index => if (Set(7, 31, 47).contains(index)) 2 else 10), 47)
-      check(IndexedSeq.tabulate(candidateCount)(index => if (index == 0) 0 else 11), 0)
-    }
-  }
-
-  test("balanced circuit d9 sequence matches the original tree") {
-    val graphPath = sys.env.getOrElse(
-      "MICROBLOSSOM_CIRCUIT_D9_GRAPH",
-      fail("MICROBLOSSOM_CIRCUIT_D9_GRAPH must name the circuit-level d9 graph")
-    )
-    val config = DualConfig(filename = graphPath)
+  private def checkGraphOrdering(config: DualConfig, expectedLeafCount: Int, seed: Long): Unit = {
     val tree = config.graph.vertex_edge_binary_tree
     val inOrder = DistributedDual.maxGrowableLeafIndicesInOrder(tree)
-    val leafCount = config.vertexNum + config.edgeNum
-    assert(inOrder.length == leafCount)
-    assert(inOrder.distinct.length == leafCount)
+    assert(config.vertexNum + config.edgeNum == expectedLeafCount)
+    assert(inOrder.length == expectedLeafCount)
+    assert(inOrder.distinct.length == expectedLeafCount)
+    assert(inOrder.sorted.sameElements(0 until expectedLeafCount))
 
-    val allEqual = IndexedSeq.fill(leafCount)(3)
+    val allEqual = IndexedSeq.fill(expectedLeafCount)(3)
     assert(legacyTreeReduce(tree, allEqual, tree.nodes.length - 1).source == inOrder.last)
 
-    val random = new scala.util.Random(0x1cedc0deL)
-    for (_ <- 0 until 512) {
-      val values = IndexedSeq.fill(leafCount)(random.nextInt(16))
+    val random = new scala.util.Random(seed)
+    for (_ <- 0 until 128) {
+      val values = IndexedSeq.fill(expectedLeafCount)(random.nextInt(1 << weightBits))
       val legacy = legacyTreeReduce(tree, values, tree.nodes.length - 1)
       val balanced = inOrder.iterator.map(index => ModelCandidate(values(index), index)).reduceLeft(select)
       assert(balanced == legacy)
+    }
+  }
+
+  private def drive(dut: MaxGrowableReductionHarness, values: IndexedSeq[Int]): Unit = {
+    values.zipWithIndex.foreach { case (value, index) => dut.io.lengths(index) #= value }
+  }
+
+  private def checkOutput(
+      dut: MaxGrowableReductionHarness,
+      reference: ModelCandidate
+  ): Unit = {
+    assert(dut.io.selectedLength.toInt == reference.length)
+    assert(dut.io.selectedSource.toInt == reference.source)
+  }
+
+  test("circuit d3 keeps ordered right-biased random and tie results at zero reduction latency") {
+    assert(circuitD3.vertexNum + circuitD3.edgeNum == 58)
+    assert(circuitD3.executeLatency == 0)
+    assert(circuitD3.maxGrowablePipelineLatency == 0)
+    assert(circuitD3.convergecastDelay == 1)
+    assert(circuitD3.readLatency == 1)
+    assert(circuitD3.initiationInterval == 1)
+    checkGraphOrdering(circuitD3, 58, 0x0d3c0deL)
+
+    compiledD3.doSim("ties-and-random") { dut =>
+      val directed = Seq(
+        IndexedSeq.fill(58)(7),
+        IndexedSeq.tabulate(58)(index => if (Set(0, 16, 57).contains(index)) 1 else 9),
+        IndexedSeq.tabulate(58)(index => if (index == 0) 0 else 11)
+      )
+      val random = new scala.util.Random(0x3eedc0deL)
+      val vectors = directed ++ Seq.fill(256)(IndexedSeq.fill(58)(random.nextInt(1 << weightBits)))
+      vectors.foreach { values =>
+        drive(dut, values)
+        sleep(1)
+        checkOutput(dut, expected(values))
+      }
+    }
+  }
+
+  test("circuit d9 keeps ordered right-biased random and tie results at two-cycle reduction latency") {
+    val candidateCount = circuitD9.vertexNum + circuitD9.edgeNum
+    assert(candidateCount == 2170)
+    circuitD9.injectRegisters = Seq("execute2", "update")
+    circuitD9.maxGrowablePipelineLatency = 2
+    assert(circuitD9.executeLatency == 2)
+    assert(circuitD9.convergecastDelay == 1)
+    assert(circuitD9.readLatency == 5)
+    assert(circuitD9.initiationInterval == 1)
+    checkGraphOrdering(circuitD9, candidateCount, 0x0d9c0deL)
+
+    val firstBoundary = DistributedDual.contiguousGroups(
+      (0 until candidateCount).toIndexedSeq,
+      16 * 16
+    )
+    assert(firstBoundary.length == 256)
+    assert(firstBoundary.forall(group => group.length == 8 || group.length == 9))
+    assert(firstBoundary.flatten.sameElements(0 until candidateCount))
+    assert(firstBoundary.grouped(16).length == 16)
+
+    compiledD9.doSim("ties-random-and-latency") { dut =>
+      dut.clockDomain.forkStimulus(period = 10)
+      val idle = IndexedSeq.fill(candidateCount)((1 << weightBits) - 1)
+      drive(dut, idle)
+      for (_ <- 0 until 3) { dut.clockDomain.waitSampling() }
+
+      val directed = Seq(
+        IndexedSeq.fill(candidateCount)(7),
+        IndexedSeq.tabulate(candidateCount)(index => if (Set(0, 255, 256, 2169).contains(index)) 1 else 9),
+        IndexedSeq.tabulate(candidateCount)(index => if (Set(15, 16, 1023, 2048).contains(index)) 2 else 10),
+        IndexedSeq.tabulate(candidateCount)(index => if (index == 0) 0 else 11)
+      )
+      val random = new scala.util.Random(0x9eedc0deL)
+      val vectors = directed ++ Seq.fill(32)(
+        IndexedSeq.fill(candidateCount)(random.nextInt(1 << weightBits))
+      )
+      val pending = scala.collection.mutable.Queue[ModelCandidate]()
+
+      vectors.foreach { values =>
+        drive(dut, values)
+        pending.enqueue(expected(values))
+        dut.clockDomain.waitSampling()
+        sleep(1)
+        if (pending.length >= 2) {
+          checkOutput(dut, pending.dequeue())
+        }
+      }
+      while (pending.nonEmpty) {
+        drive(dut, idle)
+        dut.clockDomain.waitSampling()
+        sleep(1)
+        checkOutput(dut, pending.dequeue())
+      }
     }
   }
 }

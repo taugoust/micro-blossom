@@ -76,11 +76,13 @@ case class Stages[
     namedStages += (name -> Stage(setter, getter))
   }
 
-  /** at register at a specific stage */
+  /** add a register after a specific stage */
   def injectRegisterAt(name: String) = {
     val stage = namedStages.get(name).get
     require(!stage.isRegisterInjected, "already injected")
-    stage.getter := RegNext(stage.setter)
+    val registered = RegNext(stage.setter)
+    registered.setName(s"pipelineAfter_$name")
+    stage.getter := registered
     stage.isRegisterInjected = true
   }
 

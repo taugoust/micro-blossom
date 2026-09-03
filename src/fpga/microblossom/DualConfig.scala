@@ -15,6 +15,7 @@ case class DualConfig(
     var weightBits: Int = 26,
     var broadcastDelay: Int = 0,
     var convergecastDelay: Int = 1, // the write or register update takes 1 clock cycle, so delay the output by 1
+    var maxGrowablePipelineLatency: Int = 0,
     var instructionBufferDepth: Int = 4, // buffer write instructions for higher throughput, must be a power of 2
     var contextDepth: Int = 1, // how many different contexts are supported
     var conflictChannels: Int = 1, // how many conflicts are collected at once in parallel
@@ -49,8 +50,9 @@ case class DualConfig(
     val contextDelay = 2 * (contextDepth != 1).toInt
     injectRegisters.length + contextDelay
   }
+  def initiationInterval = 1
   def readLatency = { // from sending the command to receiving the obstacle
-    broadcastDelay + convergecastDelay + executeLatency
+    broadcastDelay + executeLatency + maxGrowablePipelineLatency + convergecastDelay
   }
   def layerFusion = {
     graph.layer_fusion match {
@@ -290,6 +292,8 @@ case class DualConfig(
     assert(weightBits <= 30)
     assert(weightBits > 0)
     assert(contextDepth > 0)
+    assert(maxGrowablePipelineLatency >= 0)
+    assert(injectRegisters.distinct.length == injectRegisters.length)
     instructionSpec.sanityCheck()
   }
 }
