@@ -1186,6 +1186,8 @@
             circuitD9QshellU280IntegratedPackages."${circuitD9QshellU280IntegratedPname}-elaboration";
           circuitD9QshellU280IntegratedSynth =
             circuitD9QshellU280IntegratedPackages."${circuitD9QshellU280IntegratedPname}-synth";
+          circuitD9QshellU280IntegratedStrictRouted =
+            circuitD9QshellU280IntegratedPackages."${circuitD9QshellU280IntegratedPname}-routed";
           circuitD9QshellU280IntegratedRaw =
             circuitD9QshellU280IntegratedPackages.${circuitD9QshellU280IntegratedPname};
           circuitD9QshellU280Integrated = circuitD9QshellU280IntegratedRaw.overrideAttrs (oldAttrs: {
@@ -1200,10 +1202,126 @@
                   static = circuitD9QshellU280IntegratedStatic;
                   elaboration = circuitD9QshellU280IntegratedElaboration;
                   synth = circuitD9QshellU280IntegratedSynth;
+                  routed = circuitD9QshellU280IntegratedStrictRouted;
                 };
               };
             };
           });
+          circuitD9QshellU280NonStrictDefaultPolicy = {
+            api = "microblossom.u280-timing-acceptance/v1";
+            id = "default";
+            pname = "microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict";
+            intent = "retain-project-default-implementation-policy";
+            clockFrequencyMHz = 250;
+            clockPeriodNs = 4.000;
+            enforceTiming = false;
+            requireRouteReports = true;
+            requireCleanBitstreamDrc = true;
+            directives = {
+              opt = "project";
+              place = "project";
+              physOpt = "project";
+              route = "project";
+              postRoutePhysOpt = "project";
+              finalRoute = "project";
+            };
+          };
+          circuitD9QshellU280NonStrictTimingDrivenPolicy = circuitD9QshellU280NonStrictDefaultPolicy // {
+            id = "timing-driven";
+            pname = "microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict";
+            intent = "prioritize-net-delay-and-timing-driven-routing";
+            directives = circuitD9QshellU280NonStrictDefaultPolicy.directives // {
+              place = "ExtraNetDelay_high";
+              physOpt = "AggressiveFanoutOpt";
+              route = "NoTimingRelaxation";
+            };
+          };
+          circuitD9QshellU280ProfileFlags = profile: [
+            "-DIMPLEMENTATION_OPT_DIRECTIVE:STRING=${profile.directives.opt}"
+            "-DIMPLEMENTATION_PLACE_DIRECTIVE:STRING=${profile.directives.place}"
+            "-DIMPLEMENTATION_PHYS_OPT_DIRECTIVE:STRING=${profile.directives.physOpt}"
+            "-DIMPLEMENTATION_ROUTE_DIRECTIVE:STRING=${profile.directives.route}"
+            "-DIMPLEMENTATION_POST_ROUTE_PHYS_OPT_DIRECTIVE:STRING=${profile.directives.postRoutePhysOpt}"
+            "-DIMPLEMENTATION_FINAL_ROUTE_DIRECTIVE:STRING=${profile.directives.finalRoute}"
+          ];
+          relaxCircuitD9U280TimingAcceptance =
+            builtins.replaceStrings
+              [
+                "-DEN_TIMING_CHECK:BOOL=ON"
+                "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1"
+              ]
+              [
+                "-DEN_TIMING_CHECK:BOOL=OFF"
+                "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=0"
+              ];
+          profileCircuitD9U280BuildPhase =
+            profile: buildPhase:
+            let
+              relaxed = relaxCircuitD9U280TimingAcceptance buildPhase;
+              anchor = ''"-DIMPLEMENTATION_ENFORCE_TIMING:STRING=0"'';
+              profileFlags = lib.concatMapStringsSep "\n            " (flag: ''"${flag}"'') (
+                circuitD9QshellU280ProfileFlags profile
+              );
+            in
+            assert lib.assertMsg (lib.hasInfix anchor relaxed) (
+              "MicroBlossom circuit-d9 U280 profile requires an explicit non-strict timing-policy anchor"
+            );
+            builtins.replaceStrings [ anchor ] [ "${anchor}\n            ${profileFlags}" ] relaxed;
+          mkCircuitD9QshellU280NonStrictRouted =
+            profile:
+            circuitD9QshellU280IntegratedStrictRouted.overrideAttrs (oldAttrs: {
+              pname = "${profile.pname}-routed";
+              name = "${profile.pname}-routed-${oldAttrs.version}";
+              COYOTE_NIX_CHECK_TIMING_LOG = "0";
+              buildPhase = profileCircuitD9U280BuildPhase profile oldAttrs.buildPhase;
+              passthru = (oldAttrs.passthru or { }) // {
+                microblossomPhysicalPolicy = profile;
+              };
+            });
+          mkCircuitD9QshellU280NonStrictFinal =
+            profile: routed:
+            circuitD9QshellU280Integrated.overrideAttrs (
+              oldAttrs:
+              let
+                strictRoutedOutput = builtins.unsafeDiscardStringContext (
+                  toString circuitD9QshellU280IntegratedStrictRouted
+                );
+                profiledRoutedOutput = builtins.unsafeDiscardStringContext (toString routed);
+                strictRoutedDrv = builtins.unsafeDiscardStringContext (
+                  circuitD9QshellU280IntegratedStrictRouted.drvPath
+                );
+                retainedContext = builtins.removeAttrs (builtins.getContext oldAttrs.buildPhase) [
+                  strictRoutedDrv
+                ];
+                profiledRoutedContext = builtins.getContext (toString routed);
+                rewritten = builtins.replaceStrings [ strictRoutedOutput ] [ profiledRoutedOutput ] (
+                  builtins.unsafeDiscardStringContext oldAttrs.buildPhase
+                );
+                profiled = profileCircuitD9U280BuildPhase profile rewritten;
+              in
+              assert lib.assertMsg (lib.hasInfix strictRoutedOutput oldAttrs.buildPhase) (
+                "MicroBlossom circuit-d9 U280 final package must consume the canonical routed stage"
+              );
+              {
+                inherit (profile) pname;
+                name = "${profile.pname}-${oldAttrs.version}";
+                COYOTE_NIX_CHECK_TIMING_LOG = "0";
+                buildPhase = builtins.appendContext profiled (retainedContext // profiledRoutedContext);
+                passthru = (oldAttrs.passthru or { }) // {
+                  microblossomPhysicalPolicy = profile;
+                  microblossomValidatedStaticGraph = oldAttrs.passthru.microblossomValidatedStaticGraph // {
+                    stages = oldAttrs.passthru.microblossomValidatedStaticGraph.stages // {
+                      inherit routed;
+                    };
+                    physicalPolicy = profile;
+                  };
+                };
+              }
+            );
+          circuitD9QshellU280NonStrictRouted = mkCircuitD9QshellU280NonStrictRouted circuitD9QshellU280NonStrictDefaultPolicy;
+          circuitD9QshellU280NonStrict = mkCircuitD9QshellU280NonStrictFinal circuitD9QshellU280NonStrictDefaultPolicy circuitD9QshellU280NonStrictRouted;
+          circuitD9QshellU280TimingDrivenNonStrictRouted = mkCircuitD9QshellU280NonStrictRouted circuitD9QshellU280NonStrictTimingDrivenPolicy;
+          circuitD9QshellU280TimingDrivenNonStrict = mkCircuitD9QshellU280NonStrictFinal circuitD9QshellU280NonStrictTimingDrivenPolicy circuitD9QshellU280TimingDrivenNonStrictRouted;
 
           graphMatrixPackages = lib.foldl' (
             packages: entry:
@@ -1662,6 +1780,13 @@
             circuitD9QshellU280IntegratedElaboration;
           microblossom-circuit-level-d9-qshell-u280-integrated-strict-synth =
             circuitD9QshellU280IntegratedSynth;
+          microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict = circuitD9QshellU280NonStrict;
+          microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict-routed =
+            circuitD9QshellU280NonStrictRouted;
+          microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict =
+            circuitD9QshellU280TimingDrivenNonStrict;
+          microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict-routed =
+            circuitD9QshellU280TimingDrivenNonStrictRouted;
           microblossom-d3-qshell-v80-app-synth = d3QshellApps.v80.coyoteTwoStage.stages.synth;
           microblossom-circuit-level-d9-qshell-v80-app-congestion-spread-strict =
             circuitD9V80PhysicalApps.congestionSpread;
@@ -1746,12 +1871,28 @@
             self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-strict-elaboration;
           circuitD9U280IntegratedSynth =
             self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-strict-synth;
+          circuitD9U280NonStrict =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict;
+          circuitD9U280NonStrictRouted =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict-routed;
+          circuitD9U280TimingDrivenNonStrict =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict;
+          circuitD9U280TimingDrivenNonStrictRouted =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict-routed;
           circuitD9U280Graph = circuitD9U280Integrated.microblossomValidatedStaticGraph;
+          circuitD9U280StrictRouted = circuitD9U280Graph.stages.routed;
+          circuitD9U280NonStrictGraph = circuitD9U280NonStrict.microblossomValidatedStaticGraph;
+          circuitD9U280TimingDrivenNonStrictGraph =
+            circuitD9U280TimingDrivenNonStrict.microblossomValidatedStaticGraph;
           circuitD9U280Static = circuitD9U280Graph.stages.static;
           qshellU280Validation =
             qshell.packages.${system}.qshell-u280-shell.coyoteTwoStage.physical.units.shell.validate;
           circuitD9U280FinalContext = builtins.getContext circuitD9U280Integrated.buildPhase;
           circuitD9U280SynthContext = builtins.getContext circuitD9U280IntegratedSynth.buildPhase;
+          circuitD9U280NonStrictFinalContext = builtins.getContext circuitD9U280NonStrict.buildPhase;
+          circuitD9U280NonStrictRoutedContext = builtins.getContext circuitD9U280NonStrictRouted.buildPhase;
+          circuitD9U280TimingDrivenNonStrictFinalContext = builtins.getContext circuitD9U280TimingDrivenNonStrict.buildPhase;
+          circuitD9U280TimingDrivenNonStrictRoutedContext = builtins.getContext circuitD9U280TimingDrivenNonStrictRouted.buildPhase;
           circuitD9U280StaticContext = builtins.getContext circuitD9U280Static.buildCommand;
           contextReferences =
             context: package: builtins.hasAttr (builtins.unsafeDiscardStringContext package.drvPath) context;
@@ -2078,11 +2219,45 @@
             assert
               circuitD9U280IntegratedSynth.pname
               == "microblossom-circuit-level-d9-qshell-u280-integrated-strict-synth";
+            assert
+              circuitD9U280StrictRouted.pname
+              == "microblossom-circuit-level-d9-qshell-u280-integrated-strict-routed";
+            assert
+              circuitD9U280NonStrict.pname == "microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict";
+            assert
+              circuitD9U280NonStrictRouted.pname
+              == "microblossom-circuit-level-d9-qshell-u280-integrated-nonstrict-routed";
+            assert
+              circuitD9U280TimingDrivenNonStrict.pname
+              == "microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict";
+            assert
+              circuitD9U280TimingDrivenNonStrictRouted.pname
+              == "microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict-routed";
             assert circuitD9U280Integrated.drvPath != circuitD9U280IntegratedElaboration.drvPath;
             assert circuitD9U280Integrated.drvPath != circuitD9U280IntegratedSynth.drvPath;
             assert circuitD9U280IntegratedElaboration.drvPath != circuitD9U280IntegratedSynth.drvPath;
+            assert circuitD9U280NonStrict.drvPath != circuitD9U280Integrated.drvPath;
+            assert circuitD9U280NonStrictRouted.drvPath != circuitD9U280StrictRouted.drvPath;
+            assert circuitD9U280TimingDrivenNonStrict.drvPath != circuitD9U280NonStrict.drvPath;
+            assert circuitD9U280TimingDrivenNonStrictRouted.drvPath != circuitD9U280NonStrictRouted.drvPath;
             assert circuitD9U280Graph.stages.elaboration.drvPath == circuitD9U280IntegratedElaboration.drvPath;
             assert circuitD9U280Graph.stages.synth.drvPath == circuitD9U280IntegratedSynth.drvPath;
+            assert circuitD9U280NonStrictGraph.stages.static.drvPath == circuitD9U280Static.drvPath;
+            assert
+              circuitD9U280NonStrictGraph.stages.elaboration.drvPath
+              == circuitD9U280IntegratedElaboration.drvPath;
+            assert circuitD9U280NonStrictGraph.stages.synth.drvPath == circuitD9U280IntegratedSynth.drvPath;
+            assert circuitD9U280NonStrictGraph.stages.routed.drvPath == circuitD9U280NonStrictRouted.drvPath;
+            assert circuitD9U280TimingDrivenNonStrictGraph.stages.static.drvPath == circuitD9U280Static.drvPath;
+            assert
+              circuitD9U280TimingDrivenNonStrictGraph.stages.elaboration.drvPath
+              == circuitD9U280IntegratedElaboration.drvPath;
+            assert
+              circuitD9U280TimingDrivenNonStrictGraph.stages.synth.drvPath
+              == circuitD9U280IntegratedSynth.drvPath;
+            assert
+              circuitD9U280TimingDrivenNonStrictGraph.stages.routed.drvPath
+              == circuitD9U280TimingDrivenNonStrictRouted.drvPath;
             assert
               circuitD9U280Graph.acceleratorSourceBaseRevision == "990affc28ba7d8c1c5aa4fe38eb60f547e479e87";
             assert
@@ -2135,6 +2310,42 @@
                   rejectProtectedStaticDrift = true;
                 };
               };
+            assert circuitD9U280NonStrictGraph.importedStatic == circuitD9U280Graph.importedStatic;
+            assert circuitD9U280TimingDrivenNonStrictGraph.importedStatic == circuitD9U280Graph.importedStatic;
+            assert
+              circuitD9U280NonStrictGraph.userProjectSourceDelta.contractId
+              == circuitD9U280Graph.userProjectSourceDelta.contractId;
+            assert
+              circuitD9U280TimingDrivenNonStrictGraph.userProjectSourceDelta.contractId
+              == circuitD9U280Graph.userProjectSourceDelta.contractId;
+            assert circuitD9U280NonStrict.microblossomPhysicalPolicy.id == "default";
+            assert circuitD9U280TimingDrivenNonStrict.microblossomPhysicalPolicy.id == "timing-driven";
+            assert
+              circuitD9U280NonStrict.microblossomPhysicalPolicy.api == "microblossom.u280-timing-acceptance/v1";
+            assert circuitD9U280NonStrict.microblossomPhysicalPolicy.clockFrequencyMHz == 250;
+            assert circuitD9U280NonStrict.microblossomPhysicalPolicy.clockPeriodNs == 4.000;
+            assert !circuitD9U280NonStrict.microblossomPhysicalPolicy.enforceTiming;
+            assert circuitD9U280NonStrict.microblossomPhysicalPolicy.requireRouteReports;
+            assert circuitD9U280NonStrict.microblossomPhysicalPolicy.requireCleanBitstreamDrc;
+            assert
+              circuitD9U280TimingDrivenNonStrict.microblossomPhysicalPolicy
+              == circuitD9U280NonStrict.microblossomPhysicalPolicy
+              // {
+                id = "timing-driven";
+                pname = "microblossom-circuit-level-d9-qshell-u280-integrated-timing-driven-nonstrict";
+                intent = "prioritize-net-delay-and-timing-driven-routing";
+                directives = circuitD9U280NonStrict.microblossomPhysicalPolicy.directives // {
+                  place = "ExtraNetDelay_high";
+                  physOpt = "AggressiveFanoutOpt";
+                  route = "NoTimingRelaxation";
+                };
+              };
+            assert
+              circuitD9U280NonStrictRouted.microblossomPhysicalPolicy
+              == circuitD9U280NonStrict.microblossomPhysicalPolicy;
+            assert
+              circuitD9U280TimingDrivenNonStrictRouted.microblossomPhysicalPolicy
+              == circuitD9U280TimingDrivenNonStrict.microblossomPhysicalPolicy;
             assert circuitD9U280IntegratedElaboration.coyoteBuildSource.sourceDeltaVerified;
             assert circuitD9U280IntegratedElaboration.coyoteBuildSource.baseSource == toString coyote;
             assert
@@ -2151,14 +2362,69 @@
             assert
               circuitD9U280Integrated.coyoteBuildSource.effectiveSource
               == circuitD9U280Graph.userProjectSourceDelta.source;
+            assert circuitD9U280NonStrictRouted.coyoteBuildSource.sourceDeltaVerified;
+            assert circuitD9U280NonStrict.coyoteBuildSource.sourceDeltaVerified;
+            assert circuitD9U280TimingDrivenNonStrictRouted.coyoteBuildSource.sourceDeltaVerified;
+            assert circuitD9U280TimingDrivenNonStrict.coyoteBuildSource.sourceDeltaVerified;
+            assert
+              circuitD9U280NonStrictRouted.coyoteBuildSource.coyoteSourceDeltaId
+              == circuitD9U280Graph.userProjectSourceDelta.contractId;
+            assert
+              circuitD9U280TimingDrivenNonStrictRouted.coyoteBuildSource.coyoteSourceDeltaId
+              == circuitD9U280Graph.userProjectSourceDelta.contractId;
+            assert
+              circuitD9U280NonStrict.coyoteBuildSource.effectiveSource
+              == circuitD9U280Graph.userProjectSourceDelta.source;
+            assert
+              circuitD9U280TimingDrivenNonStrict.coyoteBuildSource.effectiveSource
+              == circuitD9U280Graph.userProjectSourceDelta.source;
+            assert toString circuitD9U280NonStrict.src == toString circuitD9U280Integrated.src;
+            assert toString circuitD9U280NonStrictRouted.src == toString circuitD9U280StrictRouted.src;
+            assert toString circuitD9U280TimingDrivenNonStrict.src == toString circuitD9U280Integrated.src;
+            assert
+              toString circuitD9U280TimingDrivenNonStrictRouted.src == toString circuitD9U280StrictRouted.src;
+            assert toString circuitD9U280NonStrict.COYOTE_ROOT == toString circuitD9U280Integrated.COYOTE_ROOT;
+            assert
+              toString circuitD9U280NonStrictRouted.COYOTE_ROOT == toString circuitD9U280StrictRouted.COYOTE_ROOT;
+            assert
+              toString circuitD9U280TimingDrivenNonStrict.COYOTE_ROOT
+              == toString circuitD9U280Integrated.COYOTE_ROOT;
+            assert
+              toString circuitD9U280TimingDrivenNonStrictRouted.COYOTE_ROOT
+              == toString circuitD9U280StrictRouted.COYOTE_ROOT;
+            assert circuitD9U280NonStrict.FDEV_NAME == "u280";
+            assert circuitD9U280NonStrict.COYOTE_NIX_XILINX_VERSION == "2023.2";
             assert contextReferences circuitD9U280FinalContext circuitD9U280Static;
+            assert contextReferences circuitD9U280FinalContext circuitD9U280StrictRouted;
             assert contextReferences circuitD9U280SynthContext circuitD9U280IntegratedElaboration;
+            assert contextReferences circuitD9U280NonStrictRoutedContext circuitD9U280Static;
+            assert contextReferences circuitD9U280NonStrictRoutedContext circuitD9U280IntegratedSynth;
+            assert contextReferences circuitD9U280NonStrictFinalContext circuitD9U280Static;
+            assert contextReferences circuitD9U280NonStrictFinalContext circuitD9U280NonStrictRouted;
+            assert !(contextReferences circuitD9U280NonStrictFinalContext circuitD9U280StrictRouted);
+            assert contextReferences circuitD9U280TimingDrivenNonStrictRoutedContext circuitD9U280Static;
+            assert contextReferences circuitD9U280TimingDrivenNonStrictRoutedContext
+              circuitD9U280IntegratedSynth;
+            assert contextReferences circuitD9U280TimingDrivenNonStrictFinalContext circuitD9U280Static;
+            assert contextReferences circuitD9U280TimingDrivenNonStrictFinalContext
+              circuitD9U280TimingDrivenNonStrictRouted;
+            assert
+              !(contextReferences circuitD9U280TimingDrivenNonStrictFinalContext circuitD9U280StrictRouted);
+            assert
+              !(contextReferences circuitD9U280TimingDrivenNonStrictFinalContext circuitD9U280NonStrictRouted);
             assert contextReferences circuitD9U280StaticContext qshellU280Validation;
-            assert lib.all (
-              path:
-              !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-synth-" path
-              && !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-routed-" path
-            ) (builtins.attrNames circuitD9U280FinalContext ++ builtins.attrNames circuitD9U280StaticContext);
+            assert lib.all
+              (
+                path:
+                !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-synth-" path
+                && !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-routed-" path
+              )
+              (
+                builtins.attrNames circuitD9U280FinalContext
+                ++ builtins.attrNames circuitD9U280NonStrictFinalContext
+                ++ builtins.attrNames circuitD9U280TimingDrivenNonStrictFinalContext
+                ++ builtins.attrNames circuitD9U280StaticContext
+              );
             assert lib.hasInfix "coyote-source-delta.py" circuitD9U280IntegratedElaboration.buildPhase;
             assert lib.hasInfix " verify " circuitD9U280IntegratedElaboration.buildPhase;
             assert lib.hasInfix "-DEN_TIMING_CHECK:BOOL=ON" circuitD9U280IntegratedElaboration.buildPhase;
@@ -2167,7 +2433,81 @@
               circuitD9U280IntegratedSynth.buildPhase;
             assert lib.hasInfix "-DEN_TIMING_CHECK:BOOL=ON" circuitD9U280Integrated.buildPhase;
             assert lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1" circuitD9U280Integrated.buildPhase;
+            assert lib.all
+              (
+                buildPhase:
+                lib.hasInfix "-DEN_TIMING_CHECK:BOOL=OFF" buildPhase
+                && lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=0" buildPhase
+                && !lib.hasInfix "-DEN_TIMING_CHECK:BOOL=ON" buildPhase
+              )
+              [
+                circuitD9U280NonStrictRouted.buildPhase
+                circuitD9U280NonStrict.buildPhase
+                circuitD9U280TimingDrivenNonStrictRouted.buildPhase
+                circuitD9U280TimingDrivenNonStrict.buildPhase
+              ];
+            assert lib.all
+              (
+                flag:
+                lib.hasInfix flag circuitD9U280NonStrictRouted.buildPhase
+                && lib.hasInfix flag circuitD9U280NonStrict.buildPhase
+              )
+              [
+                "-DIMPLEMENTATION_OPT_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_PLACE_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_PHYS_OPT_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_ROUTE_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_POST_ROUTE_PHYS_OPT_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_FINAL_ROUTE_DIRECTIVE:STRING=project"
+              ];
+            assert lib.all
+              (
+                flag:
+                lib.hasInfix flag circuitD9U280TimingDrivenNonStrictRouted.buildPhase
+                && lib.hasInfix flag circuitD9U280TimingDrivenNonStrict.buildPhase
+              )
+              [
+                "-DIMPLEMENTATION_OPT_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_PLACE_DIRECTIVE:STRING=ExtraNetDelay_high"
+                "-DIMPLEMENTATION_PHYS_OPT_DIRECTIVE:STRING=AggressiveFanoutOpt"
+                "-DIMPLEMENTATION_ROUTE_DIRECTIVE:STRING=NoTimingRelaxation"
+                "-DIMPLEMENTATION_POST_ROUTE_PHYS_OPT_DIRECTIVE:STRING=project"
+                "-DIMPLEMENTATION_FINAL_ROUTE_DIRECTIVE:STRING=project"
+              ];
+            assert circuitD9U280NonStrictRouted.COYOTE_NIX_CHECK_TIMING_LOG == "0";
+            assert circuitD9U280NonStrict.COYOTE_NIX_CHECK_TIMING_LOG == "0";
+            assert circuitD9U280TimingDrivenNonStrictRouted.COYOTE_NIX_CHECK_TIMING_LOG == "0";
+            assert circuitD9U280TimingDrivenNonStrict.COYOTE_NIX_CHECK_TIMING_LOG == "0";
+            assert lib.hasInfix "make shell" circuitD9U280NonStrictRouted.buildPhase;
+            assert lib.hasInfix "make shell" circuitD9U280TimingDrivenNonStrictRouted.buildPhase;
+            assert lib.hasInfix "coyote-protected-static-integrity.tcl" circuitD9U280NonStrictRouted.buildPhase;
+            assert lib.hasInfix "coyote-protected-static-integrity.tcl"
+              circuitD9U280TimingDrivenNonStrictRouted.buildPhase;
+            assert lib.all
+              (
+                buildPhase:
+                lib.hasInfix "for phase in link place route" buildPhase
+                && lib.hasInfix "reports/source-delta-$phase/gate.json" buildPhase
+                && lib.hasInfix ".partitionPins.identical == true" buildPhase
+                && lib.hasInfix ".protectedStatic.placement.identical == true" buildPhase
+                && lib.hasInfix ".protectedStatic.routing.identical == true" buildPhase
+                && lib.hasInfix "bitstreams/cyt_top.bit" buildPhase
+              )
+              [
+                circuitD9U280NonStrict.buildPhase
+                circuitD9U280TimingDrivenNonStrict.buildPhase
+              ];
             pkgs.runCommand "microblossom-circuit-d9-u280-validated-static-graph" { } ''
+              config=${coyote}/cmake/FindCoyoteHW.cmake
+              base_tcl=${coyote}/scripts/base.tcl.in
+              grep -F 'set(ACLK_F 250 CACHE STRING' "$config" >/dev/null
+              grep -F 'set(UCLK_F 250 CACHE STRING' "$config" >/dev/null
+              grep -F 'period_calc("1000.0 / ''${ACLK_F}" ACLK_P)' "$config" >/dev/null
+              grep -F 'period_calc("1000.0 / ''${UCLK_F}" UCLK_P)' "$config" >/dev/null
+              grep -F 'report_routed_design $report_dir $report_suffix' "$base_tcl" >/dev/null
+              grep -F 'report_bitstream_drc' "$base_tcl" >/dev/null
+              grep -F 'require_clean_bitstream_drc $drc_run_name' "$base_tcl" >/dev/null
+              grep -F 'if {$cnfg(en_timing_check) eq 1}' "$base_tcl" >/dev/null
               touch "$out"
             '';
           graph-matrix-contract =
