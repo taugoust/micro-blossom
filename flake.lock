@@ -23,6 +23,12 @@
         "coyote": [
           "coyote"
         ],
+        "coyoteDeltaBase": [
+          "coyote"
+        ],
+        "coyoteDeltaCandidate": [
+          "coyote-user-project"
+        ],
         "flake-utils": [
           "qshell",
           "flake-utils"
@@ -32,17 +38,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788465046,
-        "narHash": "sha256-w0gfX56jnrh0JR1hXkcfk1oJzgVCHW3m30uu1MWsPXE=",
+        "lastModified": 1788519099,
+        "narHash": "sha256-IWwsAgHqWfiXNnc4SbDq/j8rXGyHWou4Ia6JIHAJlfU=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "27b62a9ac918224db2806f464a117c913e58d189",
+        "rev": "8a85330219b90450bbc52543a6cfeb00666d3540",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "27b62a9ac918224db2806f464a117c913e58d189",
+        "rev": "8a85330219b90450bbc52543a6cfeb00666d3540",
         "type": "github"
       }
     },
@@ -75,6 +81,23 @@
         "rev": "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/coyote-nix.git"
+      }
+    },
+    "coyote-user-project": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788507391,
+        "narHash": "sha256-5SzpnHUIPCVIl2rHqtE1XuM4PtjyJMObEE1yZOulD7k=",
+        "owner": "taugoust",
+        "repo": "Coyote",
+        "rev": "a2ea6a76e93e526fc264d4a8eaa11291fc2f33e8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "taugoust",
+        "repo": "Coyote",
+        "rev": "a2ea6a76e93e526fc264d4a8eaa11291fc2f33e8",
+        "type": "github"
       }
     },
     "crane": {
@@ -849,6 +872,7 @@
           "coyote"
         ],
         "coyote-nix": "coyote-nix",
+        "coyote-user-project": "coyote-user-project",
         "crane": "crane",
         "doctor-cluster-xilinx": [
           "qshell",
