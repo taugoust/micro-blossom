@@ -12,9 +12,10 @@ module microblossom_qshell_clock_div2 (
     output logic slow_aresetn
 );
 
-// BUFGCE_DIV CLR asserts asynchronously, but its release must be synchronized
-// to the input clock. Keep this reset separate from the accelerator's local
-// fast-domain reset because it controls clock generation.
+// Release the divider CLR only after two input-clock edges. Keep this reset
+// separate from the accelerator's local fast-domain reset because it controls
+// clock generation. The V80 BUFGCE_DIV then samples CLR in its hard
+// synchronizer; local application resets still assert directly from aresetn.
 (* ASYNC_REG = "TRUE" *) logic [1:0] divider_reset_sync;
 logic divider_clear;
 
@@ -30,9 +31,22 @@ assign divider_clear = !divider_reset_sync[1];
 
 `ifdef MICROBLOSSOM_SIM_CLOCK_DIVIDER
 logic slow_clk_sim;
+logic divider_clear_effective;
 
-always_ff @(posedge aclk or posedge divider_clear) begin
-    if (divider_clear) begin
+`ifdef MICROBLOSSOM_VERSAL_HBM
+// Match the Versal hard CLR synchronizer in the Vivado UNISIM model: both
+// assertion and release pass through three falling-input-clock samples.
+logic [2:0] divider_clear_hardsync = 3'b111;
+always_ff @(negedge aclk) begin
+    divider_clear_hardsync <= {divider_clear_hardsync[1:0], divider_clear};
+end
+assign divider_clear_effective = divider_clear_hardsync[2];
+`else
+assign divider_clear_effective = divider_clear;
+`endif
+
+always_ff @(posedge aclk or posedge divider_clear_effective) begin
+    if (divider_clear_effective) begin
         slow_clk_sim <= 1'b0;
     end else begin
         slow_clk_sim <= ~slow_clk_sim;
@@ -44,6 +58,7 @@ assign slow_clk = slow_clk_sim;
 BUFGCE_DIV #(
     .BUFGCE_DIVIDE(2),
 `ifdef MICROBLOSSOM_VERSAL_HBM
+    .HARDSYNC_CLR("TRUE"),
     .SIM_DEVICE("VERSAL_HBM")
 `else
     .SIM_DEVICE("ULTRASCALE")

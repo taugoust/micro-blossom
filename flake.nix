@@ -2395,11 +2395,24 @@
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                  --Mdir obj_dir-u280 \
                   --top-module tb_clock_div2 \
                   ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
                   ${./src/qshell/tests/microblossom_qshell_clock_div2_tb.sv}
-                ./obj_dir/Vtb_clock_div2 2>&1 | tee "$out/test.log"
-                grep -F 'MICROBLOSSOM_QSHELL_CLOCK_DIV2_PASS' "$out/test.log" >/dev/null
+                ./obj_dir-u280/Vtb_clock_div2 2>&1 | tee "$out/u280-test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_CLOCK_DIV2_U280_PASS' \
+                  "$out/u280-test.log" >/dev/null
+
+                verilator --binary --timing --assert -Wno-fatal \
+                  -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                  -DMICROBLOSSOM_VERSAL_HBM \
+                  --Mdir obj_dir-v80 \
+                  --top-module tb_clock_div2 \
+                  ${./src/qshell/rtl/microblossom_qshell_clock_div2.sv} \
+                  ${./src/qshell/tests/microblossom_qshell_clock_div2_tb.sv}
+                ./obj_dir-v80/Vtb_clock_div2 2>&1 | tee "$out/v80-test.log"
+                grep -F 'MICROBLOSSOM_QSHELL_CLOCK_DIV2_V80_PASS' \
+                  "$out/v80-test.log" >/dev/null
                 verilator --version > "$out/verilator-version.txt"
               '';
 
@@ -2431,7 +2444,13 @@
               '';
 
           qshell-app-source =
-            pkgs.runCommand "microblossom-qshell-app-source" { nativeBuildInputs = [ pkgs.jq ]; }
+            pkgs.runCommand "microblossom-qshell-app-source"
+              {
+                nativeBuildInputs = [
+                  pkgs.jq
+                  verilator_5_014
+                ];
+              }
               ''
                 app=${qshellAppHwSource}/src/microblossom
                 hdl="$app/hdl"
@@ -2461,6 +2480,20 @@
                 grep -F 'xcv80*' "$app/init_ip.tcl" >/dev/null
                 grep -F '.SIM_DEVICE("VERSAL_HBM")' \
                   "$hdl/microblossom_qshell_clock_div2.sv" >/dev/null
+
+                clock_divider="$hdl/microblossom_qshell_clock_div2.sv"
+                verilator -E -P \
+                  "$clock_divider" > clock-divider-u280.sv
+                verilator -E -P \
+                  -DMICROBLOSSOM_VERSAL_HBM \
+                  "$clock_divider" > clock-divider-v80.sv
+                test "$(grep -Fc '.HARDSYNC_CLR("TRUE")' clock-divider-v80.sv)" = 1
+                if grep -F 'HARDSYNC_CLR' clock-divider-u280.sv; then
+                  echo 'U280 clock divider enables Versal-only hard CLR synchronization' >&2
+                  exit 1
+                fi
+                grep -F '.SIM_DEVICE("VERSAL_HBM")' clock-divider-v80.sv >/dev/null
+                grep -F '.SIM_DEVICE("ULTRASCALE")' clock-divider-u280.sv >/dev/null
                 grep -F 'vfpga_src_dir/hdl' \
                   ${coyote}/scripts/cr_prjcts/cr_user.tcl.in >/dev/null
                 test ! -e "$app/microblossom_qshell_application.sv"
