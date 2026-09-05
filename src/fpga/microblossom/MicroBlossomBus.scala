@@ -927,6 +927,10 @@ class MicroBlossomBusGeneratorConf(arguments: Seq[String]) extends ScallopConf(a
   val baseAddress = opt[BigInt](default = Some(0), descr = "base address of the memory-mapped module, default to 0")
   // DualConfig
   val broadcastDelay = opt[Int](default = Some(0))
+  val resetLeafMaxConsumers = opt[Int](
+    default = Some(DualConfig.DistributedControlMaxFanout),
+    descr = "maximum graph hierarchies sharing a distributed reset leaf"
+  )
   val convergecastDelay = opt[Int](default = Some(1))
   val maxGrowablePipelineLatency = opt[Int](default = Some(0))
   val contextDepth = opt[Int](default = Some(1), descr = "how many contexts supported")
@@ -947,6 +951,7 @@ class MicroBlossomBusGeneratorConf(arguments: Seq[String]) extends ScallopConf(a
   def dualConfig = DualConfig(
     filename = graph(),
     broadcastDelay = broadcastDelay(),
+    resetLeafMaxConsumers = resetLeafMaxConsumers(),
     convergecastDelay = convergecastDelay(),
     maxGrowablePipelineLatency = maxGrowablePipelineLatency(),
     contextDepth = contextDepth(),

@@ -739,6 +739,14 @@
                       );
                 in
                 depth distributedControlConsumerCount;
+              resetLeafCapacity =
+                let
+                  capacity = depth: if depth == 0 then 1 else distributedControlMaxFanout * capacity (depth - 1);
+                in
+                capacity distributedControlLatency;
+              resetLeafMaxConsumers = builtins.div (
+                distributedControlConsumerCount + resetLeafCapacity - 1
+              ) resetLeafCapacity;
               broadcastDelay = 0;
               broadcastLatency = broadcastDelay + distributedControlLatency;
               maxGrowablePipelineLatency = if isCircuitD9 then 2 else 0;
@@ -754,6 +762,7 @@
                 distributedControlLatency
                 distributedControlMaxFanout
                 executeLatency
+                resetLeafMaxConsumers
                 injectedRegisters
                 maxGrowablePipelineLatency
                 ;
@@ -770,12 +779,12 @@
               maxGrowablePipelineFanIn = if isCircuitD9 then 16 else null;
             };
 
-          mkGraphFixture =
-            spec:
+          mkGraphFixtureForRevision =
+            sourceRevision: generatorHost: spec:
             pkgs.runCommand "microblossom-${spec.id}-graph-v1"
               {
                 nativeBuildInputs = [
-                  microblossomHost
+                  generatorHost
                   pkgs.coreutils
                   pkgs.jq
                 ];
@@ -805,7 +814,7 @@
                   --argjson maxHalfWeight ${toString spec.maxHalfWeight} \
                   --argjson measurementRounds '${builtins.toJSON spec.measurementRounds}' \
                   --arg graphSha256 "$graph_sha256" \
-                  --arg sourceRevision '${self.rev or "dirty"}' \
+                  --arg sourceRevision '${sourceRevision}' \
                   --argjson vertexNum "$vertex_num" \
                   --argjson edgeNum "$edge_num" \
                   --argjson virtualVertexNum "$virtual_vertex_num" \
@@ -833,8 +842,10 @@
                   }' > "$fixture/manifest.json"
               '';
 
-          mkGraphRtl =
-            spec: fixture:
+          mkGraphFixture = spec: mkGraphFixtureForRevision (self.rev or "dirty") microblossomHost spec;
+
+          mkGraphRtlWithScala =
+            generatorScala: spec: fixture:
             let
               timing = graphTiming spec;
             in
@@ -852,7 +863,7 @@
                 fixture=${fixture}/share/microblossom/fixtures/${spec.id}-v1
 
                 java -Xmx16G \
-                  -cp ${microblossomScala}/share/java/microblossom.jar \
+                  -cp ${generatorScala}/share/java/microblossom.jar \
                   microblossom.MicroBlossomBusGenerator \
                   --graph "$fixture/graph.json" \
                   --output-dir "$TMPDIR/generated" \
@@ -860,6 +871,7 @@
                   --language-hdl verilog \
                   --base-address 0 \
                   --broadcast-delay ${toString timing.broadcastDelay} \
+                  --reset-leaf-max-consumers ${toString timing.resetLeafMaxConsumers} \
                   --convergecast-delay ${toString timing.convergecastDelay} \
                   --max-growable-pipeline-latency ${toString timing.maxGrowablePipelineLatency} \
                   --context-depth 1 \
@@ -879,7 +891,7 @@
                   --arg fixtureId '${spec.id}-v1' \
                   --arg graphSha256 ${spec.graphSha256} \
                   --arg rtlSha256 "$(sha256sum "$rtl/MicroBlossomBus.v" | cut -d' ' -f1)" \
-                  --arg generatorJarSha256 "$(sha256sum ${microblossomScala}/share/java/microblossom.jar | cut -d' ' -f1)" \
+                  --arg generatorJarSha256 "$(sha256sum ${generatorScala}/share/java/microblossom.jar | cut -d' ' -f1)" \
                   --argjson timing '${builtins.toJSON timing}' \
                   '{
                     schemaVersion: 1,
@@ -892,6 +904,8 @@
                     timing: $timing
                   }' > "$rtl/rtl-manifest.json"
               '';
+
+          mkGraphRtl = mkGraphRtlWithScala microblossomScala;
 
           mkGraphQshellCore =
             spec: rtl:
@@ -1033,6 +1047,102 @@
           graphMatrix = lib.listToAttrs (
             map (spec: lib.nameValuePair spec.id (mkGraphEntry spec)) graphSpecs
           );
+
+          circuitD9V80ResetLocalityApp =
+            let
+              entry = graphMatrix."circuit-level-d9";
+              inherit (entry) spec;
+              screenedHost = microblossomHost.overrideAttrs (_: {
+                version = "0.0.0-dirty";
+                __intentionallyOverridingVersion = true;
+              });
+              screenedScala = microblossomScala.overrideAttrs (_: {
+                version = "1.0-dirty";
+                __intentionallyOverridingVersion = true;
+              });
+              screenedFixture = mkGraphFixtureForRevision "dirty" screenedHost spec;
+              screenedRtl = mkGraphRtlWithScala screenedScala spec screenedFixture;
+              screenedCore = mkGraphQshellCore spec screenedRtl;
+              hwSource = mkGraphQshellAppHwSource spec screenedCore;
+              baseline = entry.apps.v80;
+              publicationPname = "microblossom-circuit-level-d9-qshell-v80-app-reset-locality-nonstrict";
+              defaultPhysicalRecipe = {
+                opt = "project";
+                place = "project";
+                physOpt = "project";
+                route = "project";
+                postRoutePhysOpt = "project";
+                finalRoute = "project";
+              };
+              physicalProfile = {
+                api = "microblossom.v80-physical-profile/v1";
+                id = "reset-locality";
+                intent = "route-localized-same-depth-reset-distribution";
+                applicationSource = {
+                  baseRevision = "aba2ba6cc07ce136548c72a9cffae8f981bdfdab";
+                  modifiedFiles = [
+                    "flake.nix"
+                    "nix/check-distributed-control-fanout.py"
+                    "src/fpga/microblossom/DualConfig.scala"
+                    "src/fpga/microblossom/MicroBlossomBus.scala"
+                    "src/fpga/microblossom/modules/DistributedDual.scala"
+                    "src/fpga/microblossom/modules/DistributedDualControlFanout.scala"
+                  ];
+                };
+                parentShell = {
+                  qshellRevision = qshell.rev;
+                  compatibilityId = "41ab941051934d9b7dcb1b149a3391e410201fab66778c126b13b9cae76e8b17";
+                  routedCheckpointSha256 = "073e7d5317c7f5ba6f4127fac9549c36df783d7fb8390b3170bd25d22919ecd6";
+                  staticPath = toString baseline.coyoteTwoStage.shellPackage.coyoteTwoStage.staticPath;
+                  staticRoutedCheckpointSha256 = "1421219513a00c5c2117750c24a102e1c5b945a06ceca92798678d4e69ae4fa0";
+                  staticSynthesizedCheckpointSha256 = "a377fdac0495092f4fedd08f70892c466b98fb72e9e4f0fbdc9eaee22b443f69";
+                  floorplanSha256 = "c52b034af7de9a41e850afcf3428e0b6396674f0102f7fc0e21c5f8eff234ef0";
+                };
+                clockPeriodNs = 4;
+                nonStrict = true;
+                screenedSynthesis = {
+                  graphManifestRevision = "dirty";
+                  hardwareSource = toString hwSource;
+                  drvPath = "/nix/store/6hx8xxac6m9786q0d40r1wnrys8jp0k9-microblossom-circuit-level-d9-qshell-v80-app-synth-0.1.0.drv";
+                  outputPath = "/nix/store/mxd67nhw64p7cfmk4a5w72yvjv5rzb82-microblossom-circuit-level-d9-qshell-v80-app-synth-0.1.0";
+                };
+                inherit defaultPhysicalRecipe;
+                terminalAcceptance = {
+                  routedHoldWnsMinimumNs = 0;
+                  requireCleanRoute = true;
+                  requireCleanBitstreamDrc = true;
+                };
+              };
+              # Physical policy starts after synthesis. Keep the canonical
+              # synthesis identity and publish only a distinct final package.
+              app = qshellLib.mkQshellAppPackage {
+                pname = baseline.pname;
+                inherit hwSource;
+                board = "v80";
+                cmakeFlags = [ "-DEN_TIMING_CHECK:BOOL=ON" ];
+                provenance = {
+                  application = "microblossom-host-driven";
+                  graphFamily = spec.generatorVariant;
+                  codeDistance = spec.distance;
+                  physicalErrorRate = spec.physicalErrorRate;
+                  maxHalfWeight = spec.maxHalfWeight;
+                  measurementRounds = spec.measurementRounds;
+                  graphSha256 = spec.graphSha256;
+                  qshellRecordAbi = qshellAbiSpec.version;
+                  mbqProtocol = 1;
+                  acceleratorClockDivideBy = 2;
+                  acceleratorTiming = graphTiming spec;
+                  inherit physicalProfile;
+                };
+                implementation.enforceTiming = false;
+              };
+            in
+            app.overrideAttrs (old: {
+              pname = publicationPname;
+              passthru = (old.passthru or { }) // {
+                microblossomPhysicalProfile = physicalProfile;
+              };
+            });
 
           circuitD9V80PhysicalProfiles = {
             congestionSpread = {
@@ -1664,6 +1774,8 @@
             circuitD9V80PhysicalApps.congestionSpread;
           microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict =
             circuitD9V80PhysicalApps.timingDriven;
+          microblossom-circuit-level-d9-qshell-v80-app-reset-locality-nonstrict =
+            circuitD9V80ResetLocalityApp;
           microblossom-d3-qshell-v80-coprocessor-app-synth =
             d3QshellCoprocessorApp.coyoteTwoStage.stages.synth;
           update-qshell-abi = updateQshellAbi;
@@ -1700,6 +1812,8 @@
             self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-app-congestion-spread-strict;
           circuitD9V80TimingDriven =
             self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-app-timing-driven-strict;
+          circuitD9V80ResetLocality =
+            self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-app-reset-locality-nonstrict;
           protocol = self.packages.${system}.microblossom-qshell-protocol;
           coyoteBridge = self.packages.${system}.microblossom-qshell-coyote-bridge;
           coyoteRunner = self.packages.${system}.microblossom-d3-qshell-coyote-run;
@@ -1820,6 +1934,7 @@
                   .timing.broadcastDelay == 0 and
                   .timing.distributedControlConsumerCount == 58 and
                   .timing.distributedControlMaxFanout == 32 and
+                  .timing.resetLeafMaxConsumers == 2 and
                   .timing.distributedControlLatency == 1 and
                   .timing.broadcastLatency == 1 and
                   .timing.convergecastDelay == 1 and
@@ -1833,6 +1948,7 @@
                   .timing.broadcastDelay == 0 and
                   .timing.distributedControlConsumerCount == 2170 and
                   .timing.distributedControlMaxFanout == 32 and
+                  .timing.resetLeafMaxConsumers == 3 and
                   .timing.distributedControlLatency == 2 and
                   .timing.broadcastLatency == 2 and
                   .timing.convergecastDelay == 1 and
@@ -1975,6 +2091,81 @@
                   --d9 ${circuitD9Rtl}/share/microblossom/rtl/circuit-level-d9-v1/MicroBlossomBus.v \
                   | tee "$out/generated-topology.log"
                 verilator --version > "$out/verilator-version.txt"
+              '';
+          circuit-d9-v80-reset-locality-profile =
+            let
+              app = circuitD9V80ResetLocality;
+              contract = app.coyoteTwoStage;
+              baseline = circuitD9V80Default.coyoteTwoStage;
+              profile = app.microblossomPhysicalProfile;
+              acceptedShell = qshellLib.shellPackages.v80;
+              acceptedShellContract = acceptedShell.coyoteTwoStage;
+              validateCommand = builtins.unsafeDiscardStringContext contract.stages.validate.buildPhase;
+              validationGateCommand = builtins.unsafeDiscardStringContext (
+                contract.stages.validationGate.buildCommand
+              );
+              validateContext = builtins.getContext contract.stages.validate.buildPhase;
+              finalContext = builtins.getContext app.buildPhase;
+            in
+            assert app.pname == "microblossom-circuit-level-d9-qshell-v80-app-reset-locality-nonstrict";
+            assert profile.api == "microblossom.v80-physical-profile/v1";
+            assert profile.id == "reset-locality";
+            assert profile.applicationSource.baseRevision == "aba2ba6cc07ce136548c72a9cffae8f981bdfdab";
+            assert builtins.length profile.applicationSource.modifiedFiles == 6;
+            assert profile.clockPeriodNs == 4;
+            assert profile.nonStrict;
+            assert profile.screenedSynthesis.graphManifestRevision == "dirty";
+            assert contract.hardwareSource == profile.screenedSynthesis.hardwareSource;
+            assert contract.stages.synth.drvPath == profile.screenedSynthesis.drvPath;
+            assert toString contract.stages.synth == profile.screenedSynthesis.outputPath;
+            assert profile.terminalAcceptance.routedHoldWnsMinimumNs == 0;
+            assert profile.terminalAcceptance.requireCleanRoute;
+            assert profile.terminalAcceptance.requireCleanBitstreamDrc;
+            assert contract.kind == "app";
+            assert contract.board == "v80";
+            assert contract.fpgaPart == "xcv80-lsva4737-2MHP-e-S";
+            assert contract.xilinxVersion == "2025.1";
+            assert contract.expectedBitstreams == [ "config_0/vfpga_c0_0.pdi" ];
+            assert contract.appCmakeFlags == baseline.appCmakeFlags;
+            assert contract.shellPackage == baseline.shellPackage;
+            assert contract.shellPackage == acceptedShell;
+            assert contract.shellPath == toString acceptedShell;
+            assert contract.shellPackage.coyoteTwoStage.staticPath == acceptedShellContract.staticPath;
+            assert contract.physical.directives == baseline.physical.directives;
+            assert contract.physical.directives == profile.defaultPhysicalRecipe;
+            assert (contract.physical.placementPortfolio or null) == null;
+            assert app.drvPath != circuitD9V80Default.drvPath;
+            assert lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=0" validateCommand;
+            assert !lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1" validateCommand;
+            assert lib.hasInfix "shell_drc_bitstream_checks_c0.rpt" validateCommand;
+            assert contextReferences validateContext contract.stages.route;
+            assert contextReferences finalContext contract.stages.validationGate;
+            assert lib.hasInfix ''if [ "$outcome" != accepted ]'' validationGateCommand;
+            pkgs.runCommand "microblossom-circuit-d9-v80-reset-locality-profile"
+              { nativeBuildInputs = [ pkgs.jq ]; }
+              ''
+                shell=${acceptedShell}
+                static=${acceptedShellContract.staticPath}
+                shell_hw=${acceptedShellContract.hardwareSource}
+                app_hw=${contract.hardwareSource}
+                test "$(jq -er '.compatibility.id' "$shell/metadata/shell.json")" = \
+                  41ab941051934d9b7dcb1b149a3391e410201fab66778c126b13b9cae76e8b17
+                test "$(sha256sum "$shell/checkpoints/shell_routed_locked.dcp" | cut -d' ' -f1)" = \
+                  073e7d5317c7f5ba6f4127fac9549c36df783d7fb8390b3170bd25d22919ecd6
+                test "$(sha256sum "$static/static_routed_locked_v80_gen5.dcp" | cut -d' ' -f1)" = \
+                  1421219513a00c5c2117750c24a102e1c5b945a06ceca92798678d4e69ae4fa0
+                test "$(sha256sum "$static/static_synthed_v80_gen5.dcp" | cut -d' ' -f1)" = \
+                  a377fdac0495092f4fedd08f70892c466b98fb72e9e4f0fbdc9eaee22b443f69
+                test "$(sha256sum "$shell_hw/floorplans/qshell_v80.xdc" | cut -d' ' -f1)" = \
+                  c52b034af7de9a41e850afcf3428e0b6396674f0102f7fc0e21c5f8eff234ef0
+                grep -Fx 'set(ACLK_F 250)' "$shell/export.cmake" >/dev/null
+                grep -Fx 'set(NCLK_F 250)' "$shell/export.cmake" >/dev/null
+                grep -Fx 'set(UCLK_F 250)' "$shell/export.cmake" >/dev/null
+                if grep -F 'set(FPLAN_PATH' "$app_hw/CMakeLists.txt"; then
+                  echo 'application source overrides the accepted parent floorplan' >&2
+                  exit 1
+                fi
+                touch "$out"
               '';
           circuit-d9-v80-physical-profiles =
             let

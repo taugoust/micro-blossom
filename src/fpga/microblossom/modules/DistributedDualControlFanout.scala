@@ -35,39 +35,91 @@ private[modules] case class ControlFanoutTopology(consumerCount: Int) {
   }
 }
 
+private[modules] case class ResetFanoutTopology(
+    consumerCount: Int,
+    depth: Int,
+    maxConsumersPerLeaf: Int
+) {
+  require(consumerCount > 0)
+  require(depth >= 0)
+  require(maxConsumersPerLeaf > 0)
+
+  val maxFanout: Int = DualConfig.DistributedControlMaxFanout
+  val leafCount: Int = (consumerCount + maxConsumersPerLeaf - 1) / maxConsumersPerLeaf
+
+  private val maximumLeafCount = Iterator.fill(depth)(BigInt(maxFanout)).foldLeft(BigInt(1))(_ * _)
+  require(
+    BigInt(leafCount) <= maximumLeafCount,
+    s"$leafCount reset leaves cannot fit in $depth levels with fanout $maxFanout"
+  )
+
+  val levelWidths: IndexedSeq[Int] = {
+    if (depth == 0) {
+      IndexedSeq.empty
+    } else {
+      val widths = Array.fill(depth)(1)
+      widths(depth - 1) = leafCount
+      var level = depth - 2
+      while (level >= 0) {
+        widths(level) = (widths(level + 1) + maxFanout - 1) / maxFanout
+        level -= 1
+      }
+      require(widths.head <= maxFanout)
+      widths.toIndexedSeq
+    }
+  }
+
+  def leafForConsumer(consumerIndex: Int): Int = {
+    require(consumerIndex >= 0 && consumerIndex < consumerCount)
+    consumerIndex / maxConsumersPerLeaf
+  }
+}
+
 private[modules] case class DistributedDualControlFanout(config: DualConfig, consumerCount: Int) extends Component {
-  private val topology = ControlFanoutTopology(consumerCount)
+  private val messageTopology = ControlFanoutTopology(consumerCount)
+  private val resetTopology = ResetFanoutTopology(
+    consumerCount,
+    messageTopology.depth,
+    config.resetLeafMaxConsumers
+  )
 
   val io = new Bundle {
     val message = in(BroadcastMessage(config))
-    val leafMessages = out(Vec.fill(topology.leafCount)(BroadcastMessage(config)))
-    val leafResets = out(Bits(topology.leafCount bits))
+    val leafMessages = out(Vec.fill(messageTopology.leafCount)(BroadcastMessage(config)))
+    val leafResets = out(Bits(resetTopology.leafCount bits))
   }
-
-  private case class ControlNode(message: BroadcastMessage, reset: Bool)
 
   private val sourceClockDomain = ClockDomain.current
   private val sourceReset = sourceClockDomain.isResetActive
   private val pipelineClockDomain = sourceClockDomain.withoutReset()
-  private var previousLevel = IndexedSeq(ControlNode(io.message, sourceReset))
 
-  for ((levelWidth, level) <- topology.levelWidths.zipWithIndex) {
-    val parentLevel = previousLevel
-    previousLevel = IndexedSeq.tabulate(levelWidth) { nodeIndex =>
-      val parent = parentLevel(nodeIndex / topology.maxFanout)
+  // Keep the complete wide message bundle on its existing minimal tree.
+  private var previousMessageLevel = IndexedSeq(io.message)
+  for ((levelWidth, level) <- messageTopology.levelWidths.zipWithIndex) {
+    val parentLevel = previousMessageLevel
+    previousMessageLevel = IndexedSeq.tabulate(levelWidth) { nodeIndex =>
+      val parent = parentLevel(nodeIndex / messageTopology.maxFanout)
       val messageStage = new ClockingArea(pipelineClockDomain) {
-        val message = RegNext(parent.message)
+        val message = RegNext(parent)
         message.setName(s"message_l${level}_n${nodeIndex}")
         message.addAttribute("keep", "true")
         message.addAttribute("dont_touch", "true")
-        message.addAttribute("max_fanout", topology.maxFanout)
+        message.addAttribute("max_fanout", messageTopology.maxFanout)
       }
+      messageStage.message
+    }
+  }
 
-      // Each reset register asynchronously asserts from its parent and only
-      // releases on a clock edge. Cascading these registers preserves direct
-      // assertion while matching the message pipeline's equal-depth release.
+  // Reset has the same number of stages as the message path but independent,
+  // finer leaves. Each register asynchronously asserts from its parent and
+  // synchronously releases on one edge, preserving equal-depth release.
+  private var previousResetLevel = IndexedSeq(sourceReset)
+  for ((levelWidth, level) <- resetTopology.levelWidths.zipWithIndex) {
+    val parentLevel = previousResetLevel
+    previousResetLevel = IndexedSeq.tabulate(levelWidth) { nodeIndex =>
+      val parent = parentLevel(nodeIndex / resetTopology.maxFanout)
       val resetClockDomain = sourceClockDomain.copy(
-        reset = parent.reset,
+        reset = parent,
         config = sourceClockDomain.config.copy(resetKind = ASYNC, resetActiveLevel = HIGH)
       )
       val resetStage = new ClockingArea(resetClockDomain) {
@@ -76,15 +128,17 @@ private[modules] case class DistributedDualControlFanout(config: DualConfig, con
         reset.setName(s"reset_l${level}_n${nodeIndex}")
         reset.addAttribute("keep", "true")
         reset.addAttribute("dont_touch", "true")
-        reset.addAttribute("max_fanout", topology.maxFanout)
+        reset.addAttribute("max_fanout", resetTopology.maxFanout)
       }
-      ControlNode(messageStage.message, resetStage.reset)
+      resetStage.reset
     }
   }
 
-  for (leafIndex <- 0 until topology.leafCount) {
-    io.leafMessages(leafIndex) := previousLevel(leafIndex).message
-    io.leafResets(leafIndex) := previousLevel(leafIndex).reset
+  for (leafIndex <- 0 until messageTopology.leafCount) {
+    io.leafMessages(leafIndex) := previousMessageLevel(leafIndex)
+  }
+  for (leafIndex <- 0 until resetTopology.leafCount) {
+    io.leafResets(leafIndex) := previousResetLevel(leafIndex)
   }
 }
 
@@ -93,7 +147,13 @@ class DistributedDualControlFanoutTest extends AnyFunSuite {
   private case class MessageSample(valid: Boolean, instruction: Long, isReset: Boolean, contextId: Int)
 
   private def graphConfig(environmentVariable: String): DualConfig = {
-    DualConfig(filename = sys.env.getOrElse(environmentVariable, fail(s"$environmentVariable must name a graph")))
+    val config =
+      DualConfig(filename = sys.env.getOrElse(environmentVariable, fail(s"$environmentVariable must name a graph")))
+    config.resetLeafMaxConsumers = DualConfig.minimumResetLeafMaxConsumers(
+      config.distributedControlConsumerCount,
+      config.distributedControlLatency
+    )
+    config
   }
 
   private def assertMinimalBoundedTopology(config: DualConfig, expectedVertices: Int, expectedEdges: Int): Unit = {
@@ -101,42 +161,93 @@ class DistributedDualControlFanoutTest extends AnyFunSuite {
     assert(config.edgeNum == expectedEdges)
     assert(config.offloaderNum == 0)
 
-    val topology = ControlFanoutTopology(config.distributedControlConsumerCount)
-    val widths = IndexedSeq(1) ++ topology.levelWidths ++ IndexedSeq(topology.consumerCount)
-    for (pair <- widths.sliding(2)) {
+    val messageTopology = ControlFanoutTopology(config.distributedControlConsumerCount)
+    val messageWidths = IndexedSeq(1) ++ messageTopology.levelWidths ++ IndexedSeq(messageTopology.consumerCount)
+    for (pair <- messageWidths.sliding(2)) {
       val parentWidth = pair.head
       val childWidth = pair.last
-      val minimumParentWidth = (childWidth + topology.maxFanout - 1) / topology.maxFanout
+      val minimumParentWidth = (childWidth + messageTopology.maxFanout - 1) / messageTopology.maxFanout
       assert(parentWidth == minimumParentWidth)
-      assert(childWidth <= parentWidth * topology.maxFanout)
+      assert(childWidth <= parentWidth * messageTopology.maxFanout)
     }
 
-    val leafLoads = Array.fill(topology.leafCount)(0)
-    for (consumerIndex <- 0 until topology.consumerCount) {
-      leafLoads(topology.leafForConsumer(consumerIndex)) += 1
+    val messageLeafLoads = Array.fill(messageTopology.leafCount)(0)
+    for (consumerIndex <- 0 until messageTopology.consumerCount) {
+      messageLeafLoads(messageTopology.leafForConsumer(consumerIndex)) += 1
     }
-    assert(leafLoads.forall(load => load > 0 && load <= topology.maxFanout))
-    assert(topology.depth == config.distributedControlLatency)
-    assert(config.broadcastLatency == config.broadcastDelay + topology.depth)
+    assert(messageLeafLoads.forall(load => load > 0 && load <= messageTopology.maxFanout))
+
+    val resetTopology = ResetFanoutTopology(
+      config.distributedControlConsumerCount,
+      messageTopology.depth,
+      config.resetLeafMaxConsumers
+    )
+    assert(resetTopology.depth == messageTopology.depth)
+    val resetWidths = IndexedSeq(1) ++ resetTopology.levelWidths
+    for (pair <- resetWidths.sliding(2)) {
+      val parentWidth = pair.head
+      val childWidth = pair.last
+      val minimumParentWidth = (childWidth + resetTopology.maxFanout - 1) / resetTopology.maxFanout
+      assert(parentWidth == minimumParentWidth)
+      assert(childWidth <= parentWidth * resetTopology.maxFanout)
+    }
+
+    val resetLeafLoads = Array.fill(resetTopology.leafCount)(0)
+    for (consumerIndex <- 0 until resetTopology.consumerCount) {
+      resetLeafLoads(resetTopology.leafForConsumer(consumerIndex)) += 1
+    }
+    assert(resetLeafLoads.forall(load => load > 0 && load <= config.resetLeafMaxConsumers))
+    assert(resetTopology.leafCount > messageTopology.leafCount)
+
+    assert(messageTopology.depth == config.distributedControlLatency)
+    assert(config.broadcastLatency == config.broadcastDelay + messageTopology.depth)
     assert(
       config.readLatency ==
         config.broadcastLatency + config.executeLatency + config.maxGrowablePipelineLatency + config.convergecastDelay
     )
   }
 
-  test("circuit d3 and d9 use minimal equal-depth bounded control trees") {
+  test("circuit d3 and d9 use bounded same-depth reset and message trees") {
     assertMinimalBoundedTopology(graphConfig("MICROBLOSSOM_CIRCUIT_D3_GRAPH"), 19, 39)
     assertMinimalBoundedTopology(graphConfig("MICROBLOSSOM_CIRCUIT_D9_GRAPH"), 433, 1737)
   }
 
+  test("reset grouping is configurable without changing message topology or latency") {
+    for (config <- Seq(
+        graphConfig("MICROBLOSSOM_CIRCUIT_D3_GRAPH"),
+        graphConfig("MICROBLOSSOM_CIRCUIT_D9_GRAPH")
+      )) {
+      val messageTopology = ControlFanoutTopology(config.distributedControlConsumerCount)
+      val fineReset = ResetFanoutTopology(
+        config.distributedControlConsumerCount,
+        messageTopology.depth,
+        config.resetLeafMaxConsumers
+      )
+      val coarseReset = ResetFanoutTopology(
+        config.distributedControlConsumerCount,
+        messageTopology.depth,
+        config.resetLeafMaxConsumers * 2
+      )
+      assert(fineReset.depth == messageTopology.depth)
+      assert(coarseReset.depth == messageTopology.depth)
+      assert(fineReset.leafCount > coarseReset.leafCount)
+      assert(messageTopology.depth == config.distributedControlLatency)
+    }
+  }
+
   private def checkBehavior(name: String, sourceConfig: DualConfig): Unit = {
     sourceConfig.contextDepth = 4
-    val topology = ControlFanoutTopology(sourceConfig.distributedControlConsumerCount)
+    val messageTopology = ControlFanoutTopology(sourceConfig.distributedControlConsumerCount)
+    val resetTopology = ResetFanoutTopology(
+      sourceConfig.distributedControlConsumerCount,
+      messageTopology.depth,
+      sourceConfig.resetLeafMaxConsumers
+    )
     val compiled = SimConfig
       .withConfig(Config.spinal())
       .workspaceName(s"control-fanout-$name")
       .allOptimisation
-      .compile(DistributedDualControlFanout(sourceConfig, topology.consumerCount))
+      .compile(DistributedDualControlFanout(sourceConfig, messageTopology.consumerCount))
 
     compiled.doSim(name) { dut =>
       def drive(sample: MessageSample): Unit = {
@@ -147,7 +258,7 @@ class DistributedDualControlFanoutTest extends AnyFunSuite {
       }
 
       def assertLeafResets(expected: Boolean, phase: String): Unit = {
-        val expectedBits = if (expected) { (BigInt(1) << topology.leafCount) - 1 }
+        val expectedBits = if (expected) { (BigInt(1) << resetTopology.leafCount) - 1 }
         else { BigInt(0) }
         assert(
           dut.io.leafResets.toBigInt == expectedBits,
@@ -156,7 +267,7 @@ class DistributedDualControlFanoutTest extends AnyFunSuite {
       }
 
       def assertLeafMessages(expected: MessageSample): Unit = {
-        for (leafIndex <- 0 until topology.leafCount) {
+        for (leafIndex <- 0 until messageTopology.leafCount) {
           val message = dut.io.leafMessages(leafIndex)
           assert(message.valid.toBoolean == expected.valid)
           assert(message.instruction.toLong == expected.instruction)
@@ -208,23 +319,23 @@ class DistributedDualControlFanoutTest extends AnyFunSuite {
       dut.clockDomain.deassertReset()
       sleep(1)
       assertLeafResets(expected = true, phase = "before release edge")
-      for (releaseEdge <- 1 to topology.depth) {
+      for (releaseEdge <- 1 to resetTopology.depth) {
         clockEdge()
         assertLeafResets(
-          expected = releaseEdge < topology.depth,
+          expected = releaseEdge < resetTopology.depth,
           phase = s"after release edge $releaseEdge"
         )
       }
 
       for ((sample, sampleIndex) <- samples.zipWithIndex) {
         drive(sample)
-        if (topology.depth == 0) {
+        if (messageTopology.depth == 0) {
           sleep(1)
           assertLeafMessages(sample)
         } else {
           clockEdge()
-          if (sampleIndex + 1 >= topology.depth) {
-            assertLeafMessages(samples(sampleIndex + 1 - topology.depth))
+          if (sampleIndex + 1 >= messageTopology.depth) {
+            assertLeafMessages(samples(sampleIndex + 1 - messageTopology.depth))
           }
         }
       }
@@ -235,7 +346,7 @@ class DistributedDualControlFanoutTest extends AnyFunSuite {
     }
   }
 
-  test("complete control bundle and reset retain directed cycle semantics") {
+  test("complete control bundle and localized reset retain directed cycle semantics") {
     checkBehavior("circuit-d3", graphConfig("MICROBLOSSOM_CIRCUIT_D3_GRAPH"))
     checkBehavior("circuit-d9", graphConfig("MICROBLOSSOM_CIRCUIT_D9_GRAPH"))
   }

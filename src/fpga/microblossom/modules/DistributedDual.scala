@@ -145,43 +145,49 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
   if (config.contextBits > 0) { broadcastMessage.contextId := io.message.contextId }
   broadcastMessage.isReset := io.message.instruction.isReset
 
-  // Apply the configured delay before the graph-sized replication tree. Every
-  // control leaf carries the complete bundle and a reset with the same depth.
+  // Apply the configured delay before graph-sized distribution. The complete
+  // message stays on its minimal tree; reset uses finer leaves at equal depth.
   val broadcastSource = Delay(broadcastMessage, config.broadcastDelay)
-  val controlTopology = ControlFanoutTopology(config.distributedControlConsumerCount)
-  val controlFanout = DistributedDualControlFanout(config, controlTopology.consumerCount)
+  val messageTopology = ControlFanoutTopology(config.distributedControlConsumerCount)
+  val resetTopology = ResetFanoutTopology(
+    config.distributedControlConsumerCount,
+    messageTopology.depth,
+    config.resetLeafMaxConsumers
+  )
+  val controlFanout = DistributedDualControlFanout(config, messageTopology.consumerCount)
   controlFanout.io.message := broadcastSource
 
   val sourceClockDomain = ClockDomain.current
-  val consumerClockDomains = (0 until controlTopology.leafCount).map { leafIndex =>
+  val consumerClockDomains = (0 until resetTopology.leafCount).map { leafIndex =>
     sourceClockDomain.copy(
       reset = controlFanout.io.leafResets(leafIndex),
       config = sourceClockDomain.config.copy(resetActiveLevel = HIGH)
     )
   }
-  def controlLeaf(consumerIndex: Int): Int = controlTopology.leafForConsumer(consumerIndex)
+  def messageLeaf(consumerIndex: Int): Int = messageTopology.leafForConsumer(consumerIndex)
+  def resetLeaf(consumerIndex: Int): Int = resetTopology.leafForConsumer(consumerIndex)
 
   // Instantiate each contiguous graph group under its hierarchy-local reset.
   // All local domains retain the source clock and reset semantics.
   val vertices = Seq.range(0, config.vertexNum).map { vertexIndex =>
-    consumerClockDomains(controlLeaf(vertexIndex)) {
+    consumerClockDomains(resetLeaf(vertexIndex)) {
       new Vertex(config, vertexIndex)
     }
   }
   val edges = Seq.range(0, config.edgeNum).map { edgeIndex =>
-    consumerClockDomains(controlLeaf(config.vertexNum + edgeIndex)) {
+    consumerClockDomains(resetLeaf(config.vertexNum + edgeIndex)) {
       new Edge(config, edgeIndex)
     }
   }
   val offloaders = Seq.range(0, config.offloaderNum).map { offloaderIndex =>
-    consumerClockDomains(controlLeaf(config.vertexNum + config.edgeNum + offloaderIndex)) {
+    consumerClockDomains(resetLeaf(config.vertexNum + config.edgeNum + offloaderIndex)) {
       new Offloader(config, offloaderIndex)
     }
   }
 
   // connect vertex I/O
   for ((vertex, vertexIndex) <- vertices.zipWithIndex) {
-    vertex.io.message := controlFanout.io.leafMessages(controlLeaf(vertexIndex))
+    vertex.io.message := controlFanout.io.leafMessages(messageLeaf(vertexIndex))
     for ((edgeIndex, localIndex) <- config.incidentEdgesOf(vertexIndex).zipWithIndex) {
       vertex.io.edgeInputs(localIndex) := edges(edgeIndex).io.stageOutputs
     }
@@ -197,7 +203,7 @@ case class DistributedDual(config: DualConfig, ioConfig: DualConfig) extends Com
 
   // connect edge I/O
   for ((edge, edgeIndex) <- edges.zipWithIndex) {
-    edge.io.message := controlFanout.io.leafMessages(controlLeaf(config.vertexNum + edgeIndex))
+    edge.io.message := controlFanout.io.leafMessages(messageLeaf(config.vertexNum + edgeIndex))
     val (leftVertex, rightVertex) = config.incidentVerticesOf(edgeIndex)
     edge.io.leftVertexInput := vertices(leftVertex).io.stageOutputs
     edge.io.rightVertexInput := vertices(rightVertex).io.stageOutputs

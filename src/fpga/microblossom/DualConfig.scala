@@ -16,6 +16,13 @@ object DualConfig {
       .indexWhere(_ <= DistributedControlMaxFanout)
   }
 
+  def minimumResetLeafMaxConsumers(consumerCount: Int, depth: Int): Int = {
+    require(consumerCount > 0)
+    require(depth >= 0)
+    val maximumLeaves = BigInt(DistributedControlMaxFanout).pow(depth)
+    ((BigInt(consumerCount) + maximumLeaves - 1) / maximumLeaves).toInt
+  }
+
   def version = Integer.parseInt("24" + "01" + "23" + "c0", 16) // year - month - date - 'c'revision
 }
 
@@ -23,6 +30,7 @@ case class DualConfig(
     var vertexBits: Int = 15,
     var weightBits: Int = 26,
     var broadcastDelay: Int = 0,
+    var resetLeafMaxConsumers: Int = DualConfig.DistributedControlMaxFanout,
     var convergecastDelay: Int = 1, // the write or register update takes 1 clock cycle, so delay the output by 1
     var maxGrowablePipelineLatency: Int = 0,
     var instructionBufferDepth: Int = 4, // buffer write instructions for higher throughput, must be a power of 2
@@ -41,6 +49,7 @@ case class DualConfig(
     var injectRegisters: Seq[String] = List()
 ) {
   assert(isPow2(instructionBufferDepth) & instructionBufferDepth >= 2)
+  require(resetLeafMaxConsumers > 0, "resetLeafMaxConsumers must be positive")
   if (supportLoadStallEmulator) {
     assert(supportLayerFusion)
   }
