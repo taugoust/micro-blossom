@@ -14,7 +14,7 @@
     };
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
     qshell-r5-accepted = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-health-event-locality-margin&rev=cac052ca67966d3b7559d4cbc8af92bacc23452c";
+      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-health-event-locality-margin&rev=868e9b253ee8a72053f83451440d223c99a1f753";
       inputs.nixpkgs.follows = "qshell/nixpkgs";
       inputs.doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
       inputs.flake-utils.follows = "qshell/flake-utils";
@@ -49,13 +49,13 @@
       v80R5QshellRevision = "fdb099f2d698535f185e90bff98e7d7987f5d969";
       v80R5CoyoteRevision = "d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
       v80R5CoyoteNixRevision = "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2";
-      acceptedR5QshellRevision = "cac052ca67966d3b7559d4cbc8af92bacc23452c";
-      acceptedR5CoyoteRevision = "e36f1ac42e8a322fd1c0f0a8cedd32bb98ac1c64";
-      acceptedR5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
+      acceptedR5QshellRevision = "868e9b253ee8a72053f83451440d223c99a1f753";
+      acceptedR5CoyoteRevision = "d61adc43f9ac71e61e99e9a3caa1987da1f583a9";
+      acceptedR5CoyoteNixRevision = "d58a6af0f0f36540aa1cb9007d2c6f12bd6ea109";
       acceptedR5DoctorRevision = "ce34aac85ebed773484dc62d5fe1531ac45150d2";
-      acceptedR5ShellDrvPath = "/nix/store/di08ws4651ns6sm4gr3labg319g6al9f-qshell-v80-coprocessor-shell-0.1.0.drv";
-      acceptedR5ShellOutputPath = "/nix/store/d7gml0vm1ksaf45mpk93p3z4qx2wfxxb-qshell-v80-coprocessor-shell-0.1.0";
-      acceptedR5StaticOutputPath = "/nix/store/nqy7apdyx9mf3xp5bp9ca676fflld8an-qshell-v80-coprocessor-static-0.1.0";
+      acceptedR5ShellDrvPath = "/nix/store/r20zdgwcz9r15igik4l719mkg16whxf2-qshell-v80-coprocessor-shell-0.1.0.drv";
+      acceptedR5ShellOutputPath = "/nix/store/pd6i5wpw3g79z4rzhciv8ilvf3sw40r5-qshell-v80-coprocessor-shell-0.1.0";
+      acceptedR5StaticOutputPath = "/nix/store/44krsimb83m8af9r17pqlbfccpybbn5i-qshell-v80-coprocessor-static-0.1.0";
       acceptedR5ShellCompatibilityId = null;
       acceptedR5ShellExportSha256 = null;
       acceptedR5ShellLockedDcpSha256 = null;
@@ -1533,6 +1533,7 @@
             xilinxShell = acceptedR5Doctor.xilinxShell;
             hwSource = circuitD9QshellCoprocessorAppHwSource;
             pname = "microblossom-circuit-level-d9-qshell-v80-coprocessor-app-nonstrict";
+            requiresVitisHls = false;
             board = "v80";
             shellPackage = acceptedR5Shell;
             cmakeFlags = [
@@ -1586,6 +1587,7 @@
             xilinxShell = acceptedR5Doctor.xilinxShell;
             hwSource = circuitD9QshellCoprocessorAppHwSource;
             pname = "microblossom-circuit-level-d9-qshell-v80-coprocessor-app-project";
+            requiresVitisHls = false;
             platform = "v80";
             coyotePlatform = "versal";
             xilinxVersion = acceptedR5Doctor.boards.v80.xilinxVersion;
