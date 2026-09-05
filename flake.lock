@@ -95,17 +95,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788570272,
-        "narHash": "sha256-v06g2F6RKI6mt6jftnyGjJzgjBDJz/UOE84vvw/Xubo=",
+        "lastModified": 1788644831,
+        "narHash": "sha256-lANPrGmYKX97IuwzPgd9U0bNbLUL6Sip1qZq+AjNS70=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "d58a6af0f0f36540aa1cb9007d2c6f12bd6ea109",
+        "rev": "e80d1d9f4f2ef3239d93b53a0464d1b36e2fa95d",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
-        "ref": "vivado-tool-selection",
         "repo": "coyote-nix",
+        "rev": "e80d1d9f4f2ef3239d93b53a0464d1b36e2fa95d",
         "type": "github"
       }
     },
@@ -927,17 +927,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788622350,
-        "narHash": "sha256-4nSrnaq17JD0ZMVShk5rHe8VfGiqc/P6jjNse+vWAPM=",
-        "ref": "v80-r5-health-event-locality-margin",
-        "rev": "868e9b253ee8a72053f83451440d223c99a1f753",
-        "revCount": 135,
+        "lastModified": 1788644943,
+        "narHash": "sha256-OGPoWhJZaR5N4AvMLtweVhr0+pcWA8FQo93tU2qfJHM=",
+        "ref": "v80-r5-health-event-nonstrict-gate",
+        "rev": "54f695770f05a002385b82224cba424de9479360",
+        "revCount": 136,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "v80-r5-health-event-locality-margin",
-        "rev": "868e9b253ee8a72053f83451440d223c99a1f753",
+        "ref": "v80-r5-health-event-nonstrict-gate",
+        "rev": "54f695770f05a002385b82224cba424de9479360",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }
