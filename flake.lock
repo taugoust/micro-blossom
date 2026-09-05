@@ -891,17 +891,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788615314,
-        "narHash": "sha256-Re4eTNE3bQsctWZRuDXCPLvvtWnUSIAzqrS/8BrrAJA=",
-        "ref": "v80-r5-static-c2h-last-beat-boundary",
-        "rev": "bf87622cdf7b9c6d8cbaa6b4a46889f44e91c163",
-        "revCount": 133,
+        "lastModified": 1788620885,
+        "narHash": "sha256-ICad1wiH82eNagsp0jOUZOdQc2zoHl26fI0wqaSV+No=",
+        "ref": "v80-r5-health-event-locality-margin",
+        "rev": "cac052ca67966d3b7559d4cbc8af92bacc23452c",
+        "revCount": 134,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "v80-r5-static-c2h-last-beat-boundary",
-        "rev": "bf87622cdf7b9c6d8cbaa6b4a46889f44e91c163",
+        "ref": "v80-r5-health-event-locality-margin",
+        "rev": "cac052ca67966d3b7559d4cbc8af92bacc23452c",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }

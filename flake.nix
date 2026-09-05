@@ -14,7 +14,7 @@
     };
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
     qshell-r5-accepted = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-static-c2h-last-beat-boundary&rev=bf87622cdf7b9c6d8cbaa6b4a46889f44e91c163";
+      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-health-event-locality-margin&rev=cac052ca67966d3b7559d4cbc8af92bacc23452c";
       inputs.nixpkgs.follows = "qshell/nixpkgs";
       inputs.doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
       inputs.flake-utils.follows = "qshell/flake-utils";
@@ -49,12 +49,12 @@
       v80R5QshellRevision = "fdb099f2d698535f185e90bff98e7d7987f5d969";
       v80R5CoyoteRevision = "d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
       v80R5CoyoteNixRevision = "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2";
-      acceptedR5QshellRevision = "bf87622cdf7b9c6d8cbaa6b4a46889f44e91c163";
+      acceptedR5QshellRevision = "cac052ca67966d3b7559d4cbc8af92bacc23452c";
       acceptedR5CoyoteRevision = "e36f1ac42e8a322fd1c0f0a8cedd32bb98ac1c64";
       acceptedR5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
       acceptedR5DoctorRevision = "ce34aac85ebed773484dc62d5fe1531ac45150d2";
-      acceptedR5ShellDrvPath = "/nix/store/2wbvb4c5nr36p5810pn9h4q6fcn054v9-qshell-v80-coprocessor-shell-0.1.0.drv";
-      acceptedR5ShellOutputPath = "/nix/store/yaajnvlrpcr89yq5q69x6yd8s00m3j9s-qshell-v80-coprocessor-shell-0.1.0";
+      acceptedR5ShellDrvPath = "/nix/store/di08ws4651ns6sm4gr3labg319g6al9f-qshell-v80-coprocessor-shell-0.1.0.drv";
+      acceptedR5ShellOutputPath = "/nix/store/d7gml0vm1ksaf45mpk93p3z4qx2wfxxb-qshell-v80-coprocessor-shell-0.1.0";
       acceptedR5StaticOutputPath = "/nix/store/nqy7apdyx9mf3xp5bp9ca676fflld8an-qshell-v80-coprocessor-static-0.1.0";
       acceptedR5ShellCompatibilityId = null;
       acceptedR5ShellExportSha256 = null;
