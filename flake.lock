@@ -110,16 +110,16 @@
     "coyote_2": {
       "flake": false,
       "locked": {
-        "lastModified": 1788103212,
-        "narHash": "sha256-lOS9yMlgkMh4souAaWDEUMsAqEDBHrsQwsO+gdmHTjw=",
+        "lastModified": 1788602967,
+        "narHash": "sha256-CYys3cNGU6el3xqCvDjI5fcIZu/PpuD9no0Wttq1Ij4=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "c801e3d47689c9255bec0d5348a9ddfcc662d29d",
+        "rev": "009e71f0dc0b3dd42e449576e4fef285ba850da3",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
-        "ref": "r5-coprocessor-provider",
+        "ref": "r5-gateway-stream-acceptance-timing",
         "repo": "Coyote",
         "type": "github"
       }
@@ -891,17 +891,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788547483,
-        "narHash": "sha256-vVP/DKCg8yfbXEbg+GokhEM8u2FjdRd6yf+OQ4bXSeQ=",
-        "ref": "v80-r5-d9-resource-envelope",
-        "rev": "d22d27fee46ebfd9d7c8fdc2d3138d5259280cae",
-        "revCount": 129,
+        "lastModified": 1788603144,
+        "narHash": "sha256-9IQjsWGIm5mYCzkborHiD6GMdRHAzcxNsmUkZWHvXDE=",
+        "ref": "v80-r5-gateway-stream-acceptance",
+        "rev": "a3e08f642cc301583a9fbd9ea8528fd3cdf130e7",
+        "revCount": 131,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "v80-r5-d9-resource-envelope",
-        "rev": "d22d27fee46ebfd9d7c8fdc2d3138d5259280cae",
+        "ref": "v80-r5-gateway-stream-acceptance",
+        "rev": "a3e08f642cc301583a9fbd9ea8528fd3cdf130e7",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }

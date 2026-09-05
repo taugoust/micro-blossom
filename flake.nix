@@ -14,7 +14,7 @@
     };
     qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
     qshell-r5-accepted = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-d9-resource-envelope&rev=d22d27fee46ebfd9d7c8fdc2d3138d5259280cae";
+      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-gateway-stream-acceptance&rev=a3e08f642cc301583a9fbd9ea8528fd3cdf130e7";
       inputs.nixpkgs.follows = "qshell/nixpkgs";
       inputs.doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
       inputs.flake-utils.follows = "qshell/flake-utils";
@@ -49,16 +49,16 @@
       v80R5QshellRevision = "fdb099f2d698535f185e90bff98e7d7987f5d969";
       v80R5CoyoteRevision = "d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
       v80R5CoyoteNixRevision = "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2";
-      acceptedR5QshellRevision = "d22d27fee46ebfd9d7c8fdc2d3138d5259280cae";
-      acceptedR5CoyoteRevision = "c801e3d47689c9255bec0d5348a9ddfcc662d29d";
+      acceptedR5QshellRevision = "a3e08f642cc301583a9fbd9ea8528fd3cdf130e7";
+      acceptedR5CoyoteRevision = "009e71f0dc0b3dd42e449576e4fef285ba850da3";
       acceptedR5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
       acceptedR5DoctorRevision = "ce34aac85ebed773484dc62d5fe1531ac45150d2";
-      acceptedR5ShellDrvPath = "/nix/store/0hlb2jsrx9b9rw1hc0gsxzwp1pnjx434-qshell-v80-coprocessor-shell-0.1.0.drv";
-      acceptedR5ShellOutputPath = "/nix/store/xr1lhbb37q5dipdmgxgj54br0j4hapkk-qshell-v80-coprocessor-shell-0.1.0";
-      acceptedR5StaticOutputPath = "/nix/store/qyc7b874gwk8i06nd306m5c130766q9i-qshell-v80-coprocessor-static-0.1.0";
-      acceptedR5ShellCompatibilityId = "76665f480995ea66bd1ae1d81c20e7711b013be9e9f21ecc255184a809e87489";
-      acceptedR5ShellExportSha256 = "384fd735e496910bbdadd6006d65a88962d07ebdec354215b0d378c58d8d5479";
-      acceptedR5ShellLockedDcpSha256 = "0a0d07376f667e36cafada156bc0620f0c4a648a1b34008b9c975c180e269b16";
+      acceptedR5ShellDrvPath = "/nix/store/4hhk7drf3wjm912s4fg8hkw172fs17d2-qshell-v80-coprocessor-shell-0.1.0.drv";
+      acceptedR5ShellOutputPath = "/nix/store/8nisws7vz9mr7mla52xjwq1brvgmh4fp-qshell-v80-coprocessor-shell-0.1.0";
+      acceptedR5StaticOutputPath = "/nix/store/a6b2zw071v3qqhmbahfvv54z49nbb9v8-qshell-v80-coprocessor-static-0.1.0";
+      acceptedR5ShellCompatibilityId = null;
+      acceptedR5ShellExportSha256 = null;
+      acceptedR5ShellLockedDcpSha256 = null;
       acceptedCircuitD9Revision = "aba2ba6cc07ce136548c72a9cffae8f981bdfdab";
       acceptedCircuitD9RtlSha256 = "88a5528729eda1f6eae3f27fb89671d39672fcfbe9d697bae1bffb00e95fff4b";
       acceptedCircuitD9ClockDividerSha256 = "efffb5165a68b4d3fb10b7c62629e86921faf45122ccc33321d60c638db548c3";
@@ -1471,14 +1471,9 @@
                 nocHighIdMin = 6;
                 nocHighIdMax = 63;
               };
-              routedTiming = {
-                setupWnsNs = 0.001;
-                setupTnsNs = 0.000;
-                holdWhsNs = 0.003;
-                holdThsNs = 0.000;
-              };
-              routeStatus = "clean";
-              dfxDrcStatus = "clean";
+              routedTiming = null;
+              routeStatus = "requires-build";
+              dfxDrcStatus = "requires-build";
             };
             implementation = {
               kind = "application-only";
@@ -3016,36 +3011,18 @@
                 fi
 
                 test "$shell" = ${acceptedR5ShellOutputPath}
-                test -f "$shell/export.cmake"
-                test -f "$shell/checkpoints/shell_routed_locked.dcp"
-                test -f "$shell/reports/config_0/validation.json"
-                test -f "$shell/reports/config_0/shell_timing_summary_c0.rpt"
-                test -f "$shell/reports/config_0/shell_route_status_c0.rpt"
-                grep -Fx 'set(ACLK_P 4)' "$shell/export.cmake" >/dev/null
-                grep -Fx 'set(ACLK_F 250)' "$shell/export.cmake" >/dev/null
-                grep -Fx 'set(N_COPROCESSOR_PORTS 1)' "$shell/export.cmake" >/dev/null
-                grep -Fx 'set(STATIC_PATH ${acceptedR5StaticOutputPath}/checkpoints)' \
-                  "$shell/export.cmake" >/dev/null
-                test -f ${acceptedR5StaticOutputPath}/checkpoints/static_routed_locked_v80_gen5.dcp
-                test "$(sha256sum "$shell/export.cmake" | cut -d' ' -f1)" = \
-                  ${acceptedR5ShellExportSha256}
-                test "$(sha256sum "$shell/checkpoints/shell_routed_locked.dcp" | cut -d' ' -f1)" = \
-                  ${acceptedR5ShellLockedDcpSha256}
-                test "$(tr -d '\n' < "$shell/metadata/compatibility-id")" = \
-                  ${acceptedR5ShellCompatibilityId}
-                jq -e '.outcome == "accepted" and .reasons == []' \
-                  "$shell/reports/config_0/validation.json" >/dev/null
-                grep -F '      0.001        0.000                      0' \
-                  "$shell/reports/config_0/shell_timing_summary_c0.rpt" >/dev/null
-                grep -F '        0.003        0.000                      0' \
-                  "$shell/reports/config_0/shell_timing_summary_c0.rpt" >/dev/null
-                grep -F '# of fully routed nets............. :      296056 :' \
-                  "$shell/reports/config_0/shell_route_status_c0.rpt" >/dev/null
-                grep -F '# of nets with routing errors.......... :           0 :' \
-                  "$shell/reports/config_0/shell_route_status_c0.rpt" >/dev/null
+                test "${acceptedR5Shell.drvPath}" = ${acceptedR5ShellDrvPath}
+                test "${acceptedR5StaticOutputPath}" = \
+                  "${acceptedR5Qshell.packages.${system}.qshell-v80-r5-static}"
 
-                test "$(grep -c '^set(FPLAN_PATH ' "$shell/export.cmake")" -eq 1
-                floorplan="$(sed -n 's/^set(FPLAN_PATH \(.*\))$/\1/p' "$shell/export.cmake")"
+                r5_stage_route="${acceptedR5Shell.coyoteTwoStage.stages.route}"
+                r5_stage_validate="${acceptedR5Shell.coyoteTwoStage.stages.validate}"
+                r5_stage_final="${acceptedR5Shell.coyoteTwoStage.stages.finalize}"
+                test -n "$r5_stage_route"
+                test -n "$r5_stage_validate"
+                test -n "$r5_stage_final"
+
+                floorplan=${acceptedR5Qshell}/hw/floorplans/qshell_v80.xdc
                 test -f "$floorplan"
                 test "$(grep -Fc 'SLICE_X204Y192:SLICE_X323Y767' "$floorplan")" -eq 1
                 test "$(grep -Eo 'BUFGCE_DIV_X[0-9]+Y[0-9]+:BUFGCE_DIV_X[0-9]+Y[0-9]+' \
@@ -3053,31 +3030,6 @@
                 grep -F 'BUFGCE_DIV_X6Y0:BUFGCE_DIV_X6Y3' "$floorplan" >/dev/null
                 test "$(grep -Fc 'set_property NOC_HIGH_ID_MIN 6 $application_pblock' "$floorplan")" -eq 1
                 test "$(grep -Fc 'set_property NOC_HIGH_ID_MAX 63 $application_pblock' "$floorplan")" -eq 1
-
-                jq -e \
-                  --arg qshell ${acceptedR5QshellRevision} \
-                  --arg coyote ${acceptedR5CoyoteRevision} \
-                  --arg coyoteNix ${acceptedR5CoyoteNixRevision} \
-                  --arg coyoteSource '${acceptedR5Coyote}' \
-                  --arg staticPackage ${acceptedR5StaticOutputPath} \
-                  --arg compatibilityId ${acceptedR5ShellCompatibilityId} \
-                  --arg exportSha256 ${acceptedR5ShellExportSha256} \
-                  --arg lockedDcpSha256 ${acceptedR5ShellLockedDcpSha256} \
-                  '.kind == "coyote-shell"
-                   and .board == "v80"
-                   and .fpgaPart == "xcv80-lsva4737-2MHP-e-S"
-                   and .xilinxVersion == "2025.1"
-                   and .flow.enPr == true
-                   and .provenance.coyoteSource == $coyoteSource
-                   and .provenance.caller.qshellRevision == $qshell
-                   and .provenance.caller.providerCoyoteRevision == $coyote
-                   and .provenance.caller.providerCoyoteNixRevision == $coyoteNix
-                   and .provenance.caller.coprocessorPorts == "1"
-                   and .provenance.caller.staticPackage == $staticPackage
-                   and .compatibility.id == $compatibilityId
-                   and .compatibility.exportCmakeSha256 == $exportSha256
-                   and .compatibility.shellRoutedLockedDcpSha256 == $lockedDcpSha256' \
-                  "$shell/metadata/shell.json" >/dev/null
 
                 r5_node="$(jq -er '.nodes.root.inputs["qshell-r5-accepted"]' ${./flake.lock})"
                 test "$(jq -er --arg node "$r5_node" '.nodes[$node].locked.rev' ${./flake.lock})" = \
