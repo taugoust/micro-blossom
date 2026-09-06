@@ -657,6 +657,11 @@
             app="$out/src/microblossom"
             hdl="$app/hdl"
             core=${d3QshellCore}/share/microblossom/qshell-core/code-capacity-repetition-d3-v1
+            ${pkgs.python3}/bin/python ${./src/qshell/render_host_wrapper.py} \
+              "$app/vfpga_top.svh" "$core/core-manifest.json" \
+              ${
+                (lib.findFirst (spec: spec.id == "code-capacity-repetition-d3") null graphSpecs).graphSha256
+              } "$app/vfpga_top.svh"
             mkdir -p "$hdl"
             cp "$core/MicroBlossomBus.v" "$hdl/"
             cp "$core/microblossom_qshell_frontend.sv" "$hdl/"
@@ -996,6 +1001,9 @@
               chmod -R u+w "$out"
               hdl="$out/src/microblossom/hdl"
               core=${core}/share/microblossom/qshell-core/${spec.id}-v1
+              ${pkgs.python3}/bin/python ${./src/qshell/render_host_wrapper.py} \
+                "$out/src/microblossom/vfpga_top.svh" "$core/core-manifest.json" \
+                ${spec.graphSha256} "$out/src/microblossom/vfpga_top.svh"
               mkdir -p "$hdl"
               cp "$core/MicroBlossomBus.v" "$hdl/"
               cp "$core/microblossom_qshell_frontend.sv" "$hdl/"
@@ -2656,6 +2664,69 @@
                 grep -F 'MICROBLOSSOM_QSHELL_ENVELOPE_PASS' "$out/test.log" >/dev/null
                 cp "$abi/qshell_abi_generated.svh" "$out/"
                 verilator --version > "$out/verilator-version.txt"
+              '';
+
+          host-graph-identity =
+            pkgs.runCommand "microblossom-host-graph-identity"
+              {
+                nativeBuildInputs = [
+                  pkgs.python3
+                  pkgs.verilator
+                  pkgs.gnumake
+                  pkgs.gcc
+                ];
+              }
+              ''
+                mkdir -p "$out"
+                ${lib.concatMapStringsSep "\n"
+                  (
+                    spec:
+                    let
+                      app = self.packages.${system}."microblossom-${spec.id}-qshell-app-hw-source";
+                      other = lib.findFirst (
+                        item: item.id == (if spec.id == "circuit-level-d3" then "circuit-level-d9" else "circuit-level-d3")
+                      ) null graphSpecs;
+                      packed =
+                        sha:
+                        lib.concatStrings (lib.reverseList (builtins.genList (i: builtins.substring (2 * i) 2 sha) 32));
+                    in
+                    ''
+                      mkdir ${spec.id}
+                      cd ${spec.id}
+                      app=${app}/src/microblossom
+                      hdl="$app/hdl"
+                      if python ${./src/qshell/render_host_wrapper.py} \
+                        ${./src/qshell/app/src/microblossom/vfpga_top.svh} \
+                        ${app}/core-manifest.json ${other.graphSha256} rejected.svh; then
+                        echo 'Mismatched selected graph/core identity was accepted' >&2
+                        exit 1
+                      fi
+                      python ${./src/qshell/tests/inert_accelerator.py} "$hdl/MicroBlossomBus.v" > inert.sv
+                      verilator --binary --timing --assert -Wno-fatal \
+                        -DMICROBLOSSOM_SIM_CLOCK_DIVIDER \
+                        --top-module tb_host_identity -I"$app" -I"$hdl" \
+                        "$hdl/microblossom_qshell_frontend.sv" \
+                        "$hdl/microblossom_qshell_core.sv" \
+                        "$hdl/microblossom_qshell_clock_div2.sv" \
+                        "$hdl/microblossom_qshell_envelope.sv" \
+                        "$hdl/microblossom_qshell_application.sv" \
+                        inert.sv ${./src/qshell/tests/microblossom_host_identity_tb.sv}
+                      ./obj_dir/Vtb_host_identity +correct=${packed spec.graphSha256} \
+                        +wrong=${packed other.graphSha256} | tee "$out/${spec.id}.log"
+                      cp "$app/vfpga_top.svh" "$out/${spec.id}-vfpga_top.svh"
+                      cd ..
+                    ''
+                  )
+                  (
+                    builtins.filter (
+                      spec:
+                      builtins.elem spec.id [
+                        "circuit-level-d3"
+                        "circuit-level-d9"
+                      ]
+                    ) graphSpecs
+                  )
+                }
               '';
 
           qshell-app-source =
