@@ -1518,6 +1518,7 @@
             xilinxShell = acceptedR5Doctor.xilinxShell;
             hwSource = circuitD9QshellCoprocessorAppHwSource;
             pname = "microblossom-circuit-level-d9-qshell-v80-coprocessor-app-nonstrict";
+            requiresVitisHls = false;
             board = "v80";
             shellPackage = acceptedR5Shell;
             cmakeFlags = [
