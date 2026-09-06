@@ -12,7 +12,7 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=master";
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-image-report-recovery&rev=251a5c15daac956801f8e0e9d83e15dd60b212e3";
     qshell-r5-accepted.follows = "qshell";
     coyote.follows = "qshell/coyote";
     coyote-nix = {

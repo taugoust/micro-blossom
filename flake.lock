@@ -3,17 +3,17 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1788683708,
-        "narHash": "sha256-tC/I4nOPs0tRXzollNnd2qv/yfP5XZSyJREOlM+oWc0=",
+        "lastModified": 1788689202,
+        "narHash": "sha256-8NjGrbOTllZEaHVoaAiQzxzNEdDMi/cGJaV+8LgvrZo=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "1739feb6830394c714101616da1687cbee11e4dd",
+        "rev": "5326e9d025204ad19b1db94ff1d897fa8be59687",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
-        "ref": "develop",
         "repo": "Coyote",
+        "rev": "5326e9d025204ad19b1db94ff1d897fa8be59687",
         "type": "github"
       }
     },
@@ -74,8 +74,8 @@
       },
       "original": {
         "owner": "TUM-DSE",
-        "ref": "master",
         "repo": "coyote-nix",
+        "rev": "8003a7b8dc4d329ea478d0fffc6f4b30958750f8",
         "type": "github"
       }
     },
@@ -291,7 +291,6 @@
         "url": "ssh://git@github.com/TUM-DSE/doctor-cluster-xilinx.git"
       },
       "original": {
-        "rev": "ce34aac85ebed773484dc62d5fe1531ac45150d2",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/doctor-cluster-xilinx.git"
       }
@@ -874,16 +873,17 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1788685096,
-        "narHash": "sha256-JBTlaL/GXtbYbm3n5DbJZUP2+RnR36wd7qxpMO61u8w=",
-        "ref": "master",
-        "rev": "568d03361495b0d78992e0bc080eb26e8a5e3040",
-        "revCount": 173,
+        "lastModified": 1788689618,
+        "narHash": "sha256-wuwLzW5rs1naHE+Knhbmhg1VZiqshQqR0oAUE3txDwY=",
+        "ref": "v80-image-report-recovery",
+        "rev": "251a5c15daac956801f8e0e9d83e15dd60b212e3",
+        "revCount": 137,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "master",
+        "ref": "v80-image-report-recovery",
+        "rev": "251a5c15daac956801f8e0e9d83e15dd60b212e3",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }
