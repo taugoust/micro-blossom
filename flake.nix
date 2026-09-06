@@ -12,7 +12,7 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=u280-clock-ownership-consume&rev=0fa5116548e0b2d70f43348e25ae1771aefecdb6";
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=u280-clock-build-recovery&rev=4af5f090a6f319fa24188261c1ad5bebf464d784";
     coyote.follows = "qshell/coyote";
     coyote-nix = {
       url = "github:TUM-DSE/coyote-nix/27b62a9ac918224db2806f464a117c913e58d189";
@@ -1025,6 +1025,7 @@
                     };
                   }
                   // lib.optionalAttrs (spec.id == "circuit-level-d9" && board == "u280") {
+                    shellPackage = qshell.packages.${system}.qshell-u280-shell-nonstrict;
                     cmakeFlags = [ "-DEN_TIMING_CHECK:BOOL=OFF" ];
                     implementation.enforceTiming = false;
                   }
