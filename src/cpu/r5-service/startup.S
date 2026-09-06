@@ -125,3 +125,5 @@ fiq_handler:
     mov r1, #0
     mov r2, #0
     b r5_exception_trap
+
+.section .note.GNU-stack, "", %progbits

@@ -16,6 +16,11 @@ PHDRS
 
 SECTIONS
 {
+    __atcm_start = ORIGIN(ATCM);
+    __atcm_limit = ORIGIN(ATCM) + LENGTH(ATCM);
+    __btcm_start = ORIGIN(BTCM);
+    __btcm_limit = ORIGIN(BTCM) + LENGTH(BTCM);
+
     .vectors ORIGIN(ATCM) :
     {
         __vectors_start = .;
@@ -59,7 +64,7 @@ SECTIONS
         __bss_end = ALIGN(4);
     } > BTCM :data
 
-    __stack_floor = 0x0002f000;
+    __stack_floor = 0x0002c800;
     __svc_stack_top = 0x0002f800;
     __abt_stack_top = 0x0002fa00;
     __und_stack_top = 0x0002fc00;
@@ -75,11 +80,21 @@ SECTIONS
 
 ASSERT(__vectors_start == 0x00000000, "vectors must begin at ATCM base")
 ASSERT((__vectors_end - __vectors_start) == 0x20, "vector table must be 32 bytes")
-ASSERT(__atcm_end <= (ORIGIN(ATCM) + LENGTH(ATCM)), "ATCM overflow")
-ASSERT(__fixture_status_start == 0x00020000, "status must begin at BTCM base")
+ASSERT(__atcm_start == 0x00000000, "ATCM origin changed")
+ASSERT(__atcm_limit == 0x00010000, "ATCM limit changed")
+ASSERT(__atcm_end <= __atcm_limit, "ATCM overflow")
+ASSERT(__btcm_start == 0x00020000, "BTCM origin changed")
+ASSERT(__btcm_limit == 0x00030000, "BTCM limit changed")
+ASSERT(__fixture_status_start == __btcm_start, "status must begin at BTCM base")
 ASSERT((__fixture_status_end - __fixture_status_start) == 0x40, "status must be 64 bytes")
 ASSERT((__data_end - __data_start) == 0, "initialized writable data is forbidden")
 ASSERT(__bss_end <= __stack_floor, "BTCM data overlaps stacks")
+ASSERT((__svc_stack_top - __stack_floor) == 0x3000, "SVC stack must be 12288 bytes")
+ASSERT((__abt_stack_top - __svc_stack_top) == 0x200, "ABT stack must be 512 bytes")
+ASSERT((__und_stack_top - __abt_stack_top) == 0x200, "UND stack must be 512 bytes")
+ASSERT((__irq_stack_top - __und_stack_top) == 0x200, "IRQ stack must be 512 bytes")
+ASSERT((__fiq_stack_top - __irq_stack_top) == 0x200, "FIQ stack must be 512 bytes")
+ASSERT(__fiq_stack_top == __btcm_limit, "reserved stacks must end at BTCM limit")
 ASSERT((__svc_stack_top & 7) == 0, "SVC stack alignment")
 ASSERT((__abt_stack_top & 7) == 0, "ABT stack alignment")
 ASSERT((__und_stack_top & 7) == 0, "UND stack alignment")

@@ -67,6 +67,22 @@ impl<T, const N: usize> Vec<T, N> {
         }
     }
 
+    /// Initializes an empty vector directly at `destination` without creating
+    /// a capacity-sized temporary.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be aligned, writable, and valid for one `Self`.
+    /// It must not point to a live value.
+    pub unsafe fn initialize_in_place(destination: *mut Self) {
+        crate::heapless::sealed::greater_than_eq_0::<N>();
+        unsafe {
+            ptr::addr_of_mut!((*destination).len).write(0);
+        }
+        // `buffer` is an array of `MaybeUninit<T>` and therefore needs no
+        // byte initialization while the vector length is zero.
+    }
+
     /// Constructs a new vector with a fixed capacity of `N` and fills it
     /// with the provided slice.
     ///

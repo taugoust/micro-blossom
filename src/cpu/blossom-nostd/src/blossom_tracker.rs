@@ -9,7 +9,7 @@
 use crate::heapless::binary_heap::{BinaryHeap, Min};
 use crate::heapless::Vec;
 use crate::util::*;
-use core::cmp::Ordering;
+use core::{cmp::Ordering, ptr};
 #[cfg(any(test, feature = "std"))]
 use derivative::Derivative;
 
@@ -63,6 +63,24 @@ impl<const N: usize> BlossomTracker<N> {
             },
             checkpoints: Vec::new(),
             grow_states: Vec::new(),
+        }
+    }
+
+    /// Initializes a tracker directly at `destination` without creating an
+    /// `N`-sized temporary.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be aligned, writable, and valid for one `Self`.
+    /// It must not point to a live value.
+    pub unsafe fn initialize_in_place(destination: *mut Self) {
+        let first_index = CompactNodeIndex::new(0).unwrap();
+        unsafe {
+            BinaryHeap::initialize_in_place(ptr::addr_of_mut!((*destination).hit_zero_events));
+            ptr::addr_of_mut!((*destination).timestamp).write(0);
+            ptr::addr_of_mut!((*destination).first_index).write(first_index);
+            Vec::initialize_in_place(ptr::addr_of_mut!((*destination).checkpoints));
+            Vec::initialize_in_place(ptr::addr_of_mut!((*destination).grow_states));
         }
     }
 

@@ -1,5 +1,6 @@
 use microblossom_qshell_protocol::{
-    CoprocessorQshellLink, CoyoteProcessBeatLink, DecodeRequest, QshellRoute,
+    CoprocessorGraphContract, CoprocessorQshellLink, CoyoteProcessBeatLink, DecodeRequest,
+    QshellRoute,
 };
 
 const GRAPH_ID: [u8; 32] = [
@@ -27,8 +28,17 @@ fn main() {
     let vfpga = number(&args, "--vfpga", 0) as i32;
     let timeout_ms = number(&args, "--timeout-ms", 5000) as u64;
     let decoder_endpoint = number(&args, "--decoder-endpoint", 1);
-    let beats = CoyoteProcessBeatLink::spawn_with_continuation(bridge, vfpga, timeout_ms, 32)
-        .expect("failed to start Coyote bridge");
+    let route_version = number(&args, "--route-version", 1);
+    assert_ne!(route_version, 0, "expected route version must be nonzero");
+    let contract = CoprocessorGraphContract::new_with_capacities(GRAPH_ID, 4, 3, &[2, 3], 4, 2)
+        .expect("invalid legacy d3 graph contract");
+    let beats = CoyoteProcessBeatLink::spawn_with_response_bytes(
+        bridge,
+        vfpga,
+        timeout_ms,
+        contract.response_packet_bytes(),
+    )
+    .expect("failed to start Coyote bridge");
     let mut link = CoprocessorQshellLink::new(
         beats,
         QshellRoute {
@@ -38,6 +48,8 @@ fn main() {
             route_capability_id: number(&args, "--capability", 1),
             expected_decoder_endpoint_id: Some(decoder_endpoint),
         },
+        contract,
+        route_version,
     );
     let result = link
         .decode(&DecodeRequest {

@@ -11,6 +11,8 @@ pub const MAGIC: [u8; 4] = *b"MBQ1";
 pub const VERSION: u8 = 1;
 pub const UNBOUNDED_OPERATIONS: u64 = u64::MAX;
 pub const MAX_STALE_RESPONSES: usize = 16;
+pub const MAX_QSHELL_PACKET_BYTES: usize = 4096;
+pub const MAX_QSHELL_PACKET_BEATS: usize = MAX_QSHELL_PACKET_BYTES / qshell_abi::BEAT_BYTES;
 
 const WIDTH_MASK: u16 = 0x0003;
 const RESPONSE_FLAG: u16 = 0x0100;
@@ -324,11 +326,12 @@ pub struct AxisBeat {
     pub last: bool,
 }
 
-/// Blocking transport for individual 64-byte AXI-stream beats.
+/// Blocking logical transport for individual 64-byte record beats.
 ///
-/// Implementations must preserve beat order and the exact low-lane `keep`
-/// mask. A Coyote implementation can map each two-beat record to one 112-byte
-/// transfer, but it must not pad the final continuation to 128 valid bytes.
+/// Implementations preserve beat order and logical low-lane `keep` framing.
+/// The production Coyote/XDB receive adapters do not observe source AXI-stream
+/// sidebands: after resident QShell store-and-forward validation/frame commit,
+/// they reconstruct this logical shape from one fixed graph-sized descriptor.
 pub trait BeatLink {
     type Error;
 
@@ -363,11 +366,13 @@ impl From<std::io::Error> for CoyoteProcessError {
     }
 }
 
-/// Process-backed beat transport for the packaged Coyote C++ bridge.
+/// Process-backed logical beat transport for the packaged Coyote C++ bridge.
 ///
 /// Keeping the Coyote driver boundary in a separately packaged process avoids
-/// adding C++ ABI assumptions to the Rust protocol crate. The bridge maps the
-/// first/final beat pair to one-sided `LOCAL_WRITE` and `LOCAL_READ` sequences.
+/// adding C++ ABI assumptions to the Rust protocol crate. On receive, the
+/// bridge waits for one fixed-length DMA descriptor to complete before exposing
+/// bytes and derives logical beat boundaries rather than reporting source
+/// `tkeep`/`tlast` observations.
 pub struct CoyoteProcessBeatLink {
     child: std::process::Child,
     input: std::process::ChildStdin,
@@ -380,7 +385,12 @@ impl CoyoteProcessBeatLink {
         vfpga_id: i32,
         timeout_ms: u64,
     ) -> Result<Self, CoyoteProcessError> {
-        Self::spawn_with_continuation(executable, vfpga_id, timeout_ms, 48)
+        Self::spawn_with_response_bytes(
+            executable,
+            vfpga_id,
+            timeout_ms,
+            qshell_abi::BEAT_BYTES + 48,
+        )
     }
 
     pub fn spawn_with_continuation(
@@ -389,20 +399,37 @@ impl CoyoteProcessBeatLink {
         timeout_ms: u64,
         continuation_bytes: usize,
     ) -> Result<Self, CoyoteProcessError> {
-        use std::process::Stdio;
-
         if continuation_bytes == 0 || continuation_bytes > qshell_abi::BEAT_BYTES {
             return Err(CoyoteProcessError::Bridge(
                 "response continuation must contain 1..64 bytes".to_owned(),
             ));
+        }
+        let response_bytes = qshell_abi::BEAT_BYTES
+            .checked_add(continuation_bytes)
+            .ok_or_else(|| CoyoteProcessError::Bridge("response size overflow".to_owned()))?;
+        Self::spawn_with_response_bytes(executable, vfpga_id, timeout_ms, response_bytes)
+    }
+
+    pub fn spawn_with_response_bytes(
+        executable: impl AsRef<std::ffi::OsStr>,
+        vfpga_id: i32,
+        timeout_ms: u64,
+        response_bytes: usize,
+    ) -> Result<Self, CoyoteProcessError> {
+        use std::process::Stdio;
+
+        if response_bytes <= qshell_abi::BEAT_BYTES || response_bytes > MAX_QSHELL_PACKET_BYTES {
+            return Err(CoyoteProcessError::Bridge(format!(
+                "response packet must contain 65..={MAX_QSHELL_PACKET_BYTES} bytes"
+            )));
         }
         let mut child = std::process::Command::new(executable)
             .arg("--vfpga")
             .arg(vfpga_id.to_string())
             .arg("--timeout-ms")
             .arg(timeout_ms.to_string())
-            .arg("--continuation-bytes")
-            .arg(continuation_bytes.to_string())
+            .arg("--response-bytes")
+            .arg(response_bytes.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()?;
@@ -507,8 +534,14 @@ pub enum QshellLinkError<LinkError> {
     InvalidEnvelopeLength(u32),
     InvalidEnvelopeKeep { expected: u64, actual: u64 },
     MetadataMismatch,
+    RequestGraphMismatch,
+    InvalidDefects,
+    ResultGraphMismatch,
+    InvalidCorrectionEdge(u16),
+    NonzeroPayloadPadding,
     CorrectionSequence { expected: u32, actual: u32 },
     EndOfRoundMismatch,
+    LinkPoisoned,
     RemoteQshellError { code: u16, scope: u8, detail: u32 },
 }
 
@@ -539,12 +572,31 @@ impl<LinkError: fmt::Display> fmt::Display for QshellLinkError<LinkError> {
                 "invalid QShell keep mask 0x{actual:016x}, expected 0x{expected:016x}"
             ),
             Self::MetadataMismatch => formatter.write_str("QShell response metadata mismatch"),
+            Self::RequestGraphMismatch => {
+                formatter.write_str("decode request does not match the graph contract")
+            }
+            Self::InvalidDefects => formatter.write_str("invalid bounded defect list"),
+            Self::ResultGraphMismatch => {
+                formatter.write_str("decode result does not match the graph contract")
+            }
+            Self::InvalidCorrectionEdge(edge) => {
+                write!(
+                    formatter,
+                    "correction edge {edge} is outside the graph contract"
+                )
+            }
+            Self::NonzeroPayloadPadding => {
+                formatter.write_str("fixed-capacity payload has nonzero padding")
+            }
             Self::CorrectionSequence { expected, actual } => write!(
                 formatter,
                 "QShell correction sequence mismatch: expected {expected}, received {actual}"
             ),
             Self::EndOfRoundMismatch => {
                 formatter.write_str("QShell and MBQ1 terminal markers disagree")
+            }
+            Self::LinkPoisoned => {
+                formatter.write_str("QShell link is poisoned; reconnect required")
             }
             Self::RemoteQshellError {
                 code,
@@ -1149,12 +1201,169 @@ impl fmt::Display for DecodeError {
 
 impl std::error::Error for DecodeError {}
 
-pub const COPROCESSOR_PAYLOAD_BYTES: usize = 48;
-pub const COPROCESSOR_PACKET_BYTES: usize = qshell_abi::HEADER_BYTES + COPROCESSOR_PAYLOAD_BYTES;
-pub const MAX_DECODE_DEFECTS: usize = 4;
-pub const MAX_CORRECTION_EDGES: usize = 2;
+pub const COPROCESSOR_REQUEST_PREFIX_BYTES: usize = 40;
+pub const COPROCESSOR_RESULT_PREFIX_BYTES: usize = 44;
 const DECODE_REQUEST_MAGIC: [u8; 4] = *b"MBJ1";
 const DECODE_RESULT_MAGIC: [u8; 4] = *b"MBR1";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CoprocessorContractError {
+    ZeroGraphIdentity,
+    InvalidGraphShape,
+    PacketStorageExceeded,
+}
+
+impl fmt::Display for CoprocessorContractError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroGraphIdentity => formatter.write_str("graph identity must be nonzero"),
+            Self::InvalidGraphShape => formatter.write_str("graph dimensions are inconsistent"),
+            Self::PacketStorageExceeded => write!(
+                formatter,
+                "graph records exceed the {MAX_QSHELL_PACKET_BYTES}-byte provider store"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CoprocessorContractError {}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CoprocessorGraphContract {
+    graph_id: GraphId,
+    vertex_count: u16,
+    edge_count: u16,
+    virtual_vertices: Vec<u16>,
+    max_defects: usize,
+    max_correction_edges: usize,
+}
+
+impl CoprocessorGraphContract {
+    pub fn new(
+        graph_id: GraphId,
+        vertex_count: u16,
+        edge_count: u16,
+        virtual_vertices: &[u16],
+    ) -> Result<Self, CoprocessorContractError> {
+        Self::new_with_capacities(
+            graph_id,
+            vertex_count,
+            edge_count,
+            virtual_vertices,
+            usize::from(vertex_count).saturating_sub(virtual_vertices.len()),
+            usize::from(edge_count),
+        )
+    }
+
+    pub fn new_with_capacities(
+        graph_id: GraphId,
+        vertex_count: u16,
+        edge_count: u16,
+        virtual_vertices: &[u16],
+        max_defects: usize,
+        max_correction_edges: usize,
+    ) -> Result<Self, CoprocessorContractError> {
+        if graph_id.iter().all(|byte| *byte == 0) {
+            return Err(CoprocessorContractError::ZeroGraphIdentity);
+        }
+        let nonvirtual_vertices = usize::from(vertex_count).saturating_sub(virtual_vertices.len());
+        if vertex_count == 0
+            || edge_count == 0
+            || virtual_vertices.len() >= usize::from(vertex_count)
+            || virtual_vertices
+                .iter()
+                .any(|vertex| *vertex >= vertex_count)
+            || virtual_vertices.windows(2).any(|pair| pair[0] >= pair[1])
+            || max_defects < nonvirtual_vertices
+            || max_defects > usize::from(vertex_count)
+            || max_correction_edges == 0
+            || max_correction_edges > usize::from(edge_count)
+        {
+            return Err(CoprocessorContractError::InvalidGraphShape);
+        }
+        let contract = Self {
+            graph_id,
+            vertex_count,
+            edge_count,
+            virtual_vertices: virtual_vertices.to_vec(),
+            max_defects,
+            max_correction_edges,
+        };
+        if contract.request_packet_bytes() > MAX_QSHELL_PACKET_BYTES
+            || contract.response_packet_bytes() > MAX_QSHELL_PACKET_BYTES
+            || contract.request_beats() > MAX_QSHELL_PACKET_BEATS
+            || contract.response_beats() > MAX_QSHELL_PACKET_BEATS
+        {
+            return Err(CoprocessorContractError::PacketStorageExceeded);
+        }
+        Ok(contract)
+    }
+
+    pub const fn graph_id(&self) -> GraphId {
+        self.graph_id
+    }
+
+    pub const fn vertex_count(&self) -> u16 {
+        self.vertex_count
+    }
+
+    pub fn virtual_vertices(&self) -> &[u16] {
+        &self.virtual_vertices
+    }
+
+    pub fn virtual_vertex_count(&self) -> usize {
+        self.virtual_vertices.len()
+    }
+
+    pub const fn edge_count(&self) -> u16 {
+        self.edge_count
+    }
+
+    pub fn is_virtual_vertex(&self, vertex: u16) -> bool {
+        self.virtual_vertices.binary_search(&vertex).is_ok()
+    }
+
+    pub const fn max_defects(&self) -> usize {
+        self.max_defects
+    }
+
+    pub const fn max_correction_edges(&self) -> usize {
+        self.max_correction_edges
+    }
+
+    pub fn has_exact_graph_capacities(&self) -> bool {
+        self.max_defects == usize::from(self.vertex_count) - self.virtual_vertices.len()
+            && self.max_correction_edges == usize::from(self.edge_count)
+    }
+
+    pub fn request_payload_bytes(&self) -> usize {
+        COPROCESSOR_REQUEST_PREFIX_BYTES + 2 * self.max_defects()
+    }
+
+    pub const fn response_payload_bytes(&self) -> usize {
+        COPROCESSOR_RESULT_PREFIX_BYTES + 2 * self.max_correction_edges()
+    }
+
+    pub fn request_packet_bytes(&self) -> usize {
+        qshell_abi::HEADER_BYTES + self.request_payload_bytes()
+    }
+
+    pub const fn response_packet_bytes(&self) -> usize {
+        qshell_abi::HEADER_BYTES + self.response_payload_bytes()
+    }
+
+    pub fn request_beats(&self) -> usize {
+        packet_beats(self.request_packet_bytes())
+    }
+
+    pub const fn response_beats(&self) -> usize {
+        packet_beats(self.response_packet_bytes())
+    }
+}
+
+const fn packet_beats(bytes: usize) -> usize {
+    (bytes + qshell_abi::BEAT_BYTES - 1) / qshell_abi::BEAT_BYTES
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecodeRequest {
@@ -1173,35 +1382,102 @@ pub struct DecodeResult {
 pub struct CoprocessorQshellLink<Link: BeatLink> {
     link: Link,
     route: QshellRoute,
+    contract: CoprocessorGraphContract,
     round_id: u32,
+    expected_route_version: u32,
+    poisoned: bool,
 }
 
 impl<Link: BeatLink> CoprocessorQshellLink<Link> {
-    pub fn new(link: Link, route: QshellRoute) -> Self {
+    /// Establish a decode session from a freshly opened transport epoch and
+    /// its currently admitted route capability. A poisoned instance cannot be
+    /// refreshed in place because an accepted round may still be outstanding.
+    pub fn new(
+        link: Link,
+        route: QshellRoute,
+        contract: CoprocessorGraphContract,
+        expected_route_version: u32,
+    ) -> Self {
         Self {
             link,
             round_id: route.initial_round_id,
             route,
+            contract,
+            expected_route_version,
+            poisoned: false,
         }
     }
 
-    pub fn decode(
-        &mut self,
-        request: &DecodeRequest,
-    ) -> Result<DecodeResult, QshellLinkError<Link::Error>> {
-        if request.defects.len() > MAX_DECODE_DEFECTS
-            || request.defects.windows(2).any(|pair| pair[0] >= pair[1])
-        {
-            return Err(QshellLinkError::MalformedEnvelope);
+    pub fn contract(&self) -> &CoprocessorGraphContract {
+        &self.contract
+    }
+
+    pub fn link(&self) -> &Link {
+        &self.link
+    }
+
+    pub fn link_mut(&mut self) -> &mut Link {
+        &mut self.link
+    }
+
+    pub const fn expected_route_version(&self) -> u32 {
+        self.expected_route_version
+    }
+
+    pub const fn poisoned(&self) -> bool {
+        self.poisoned
+    }
+
+    fn ensure_healthy(&self) -> Result<(), QshellLinkError<Link::Error>> {
+        if self.poisoned {
+            Err(QshellLinkError::LinkPoisoned)
+        } else {
+            Ok(())
         }
-        let mut payload = [0_u8; COPROCESSOR_PAYLOAD_BYTES];
-        payload[..4].copy_from_slice(&DECODE_REQUEST_MAGIC);
-        put_u16(&mut payload, 4, 1);
-        put_u16(&mut payload, 6, request.defects.len() as u16);
-        payload[8..40].copy_from_slice(&request.graph_id);
-        for (index, defect) in request.defects.iter().enumerate() {
-            put_u16(&mut payload, 40 + 2 * index, *defect);
+    }
+
+    fn send_axis_beat(&mut self, beat: AxisBeat) -> Result<(), QshellLinkError<Link::Error>> {
+        match self.link.send_beat(beat) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // BeatLink has no accepted-count receipt, so a send failure is
+                // ambiguous and cannot be treated as a provably pre-send error.
+                self.poisoned = true;
+                Err(QshellLinkError::Link(error))
+            }
         }
+    }
+
+    fn receive_axis_beat(&mut self) -> Result<AxisBeat, QshellLinkError<Link::Error>> {
+        match self.link.receive_beat() {
+            Ok(beat) => Ok(beat),
+            Err(error) => {
+                self.poisoned = true;
+                Err(QshellLinkError::Link(error))
+            }
+        }
+    }
+
+    fn response_identity_matches(&self, first: &AxisBeat, schema_id: u32) -> bool {
+        let route_version = get_u32(&first.data, qshell_abi::offset::ROUTE_VERSION);
+        let expected_source = self.route.expected_decoder_endpoint_id;
+        get_u32(&first.data, qshell_abi::offset::CONTEXT_ID) == self.route.context_id
+            && get_u32(&first.data, qshell_abi::offset::ROUND_ID) == self.round_id
+            && get_u32(&first.data, qshell_abi::offset::SCHEMA_ID) == schema_id
+            && expected_source.is_some_and(|source| {
+                source != 0
+                    && get_u32(&first.data, qshell_abi::offset::SOURCE_ENDPOINT_ID) == source
+            })
+            && get_u32(&first.data, qshell_abi::offset::DESTINATION_ENDPOINT_ID)
+                == self.route.source_endpoint_id
+            && get_u32(&first.data, qshell_abi::offset::ROUTE_CAPABILITY_ID)
+                == self.route.route_capability_id
+            && route_version != 0
+            && route_version == self.expected_route_version
+            && get_u32(&first.data, qshell_abi::offset::RECORD_SEQUENCE) == 0
+    }
+
+    fn send_payload(&mut self, payload: &[u8]) -> Result<(), QshellLinkError<Link::Error>> {
         let mut first = AxisBeat {
             data: [0; qshell_abi::BEAT_BYTES],
             keep: u64::MAX,
@@ -1212,7 +1488,7 @@ impl<Link: BeatLink> CoprocessorQshellLink<Link> {
             qshell_abi::offset::MAGIC,
             qshell_abi::MAGIC,
         );
-        first.data[qshell_abi::offset::ABI_VERSION] = qshell_abi::VERSION as u8;
+        first.data[qshell_abi::offset::ABI_VERSION] = qshell_abi::VERSION;
         first.data[qshell_abi::offset::RECORD_CLASS] = qshell_abi::record_class::SYNDROME;
         put_u16(
             &mut first.data,
@@ -1227,7 +1503,7 @@ impl<Link: BeatLink> CoprocessorQshellLink<Link> {
         put_u32(
             &mut first.data,
             qshell_abi::offset::PAYLOAD_BYTES,
-            COPROCESSOR_PAYLOAD_BYTES as u32,
+            payload.len() as u32,
         );
         put_u32(
             &mut first.data,
@@ -1248,7 +1524,7 @@ impl<Link: BeatLink> CoprocessorQshellLink<Link> {
         put_u32(
             &mut first.data,
             qshell_abi::offset::DESTINATION_ENDPOINT_ID,
-            self.route.expected_decoder_endpoint_id.unwrap_or(0),
+            0,
         );
         put_u32(
             &mut first.data,
@@ -1258,52 +1534,161 @@ impl<Link: BeatLink> CoprocessorQshellLink<Link> {
         put_u32(&mut first.data, qshell_abi::offset::ROUTE_VERSION, 0);
         put_u32(&mut first.data, qshell_abi::offset::RECORD_SEQUENCE, 0);
         first.data[qshell_abi::HEADER_BYTES..].copy_from_slice(&payload[..16]);
-        let mut second = AxisBeat {
-            data: [0; qshell_abi::BEAT_BYTES],
-            keep: (1_u64 << 32) - 1,
-            last: true,
-        };
-        second.data[..32].copy_from_slice(&payload[16..]);
-        self.link.send_beat(first).map_err(QshellLinkError::Link)?;
-        self.link.send_beat(second).map_err(QshellLinkError::Link)?;
+        self.send_axis_beat(first)?;
 
-        let first = self.link.receive_beat().map_err(QshellLinkError::Link)?;
-        let second = self.link.receive_beat().map_err(QshellLinkError::Link)?;
-        if first.last
-            || !second.last
-            || first.keep != u64::MAX
-            || second.keep != (1_u64 << 32) - 1
-            || get_u32(&first.data, qshell_abi::offset::MAGIC) != qshell_abi::MAGIC
-            || first.data[qshell_abi::offset::ABI_VERSION] != qshell_abi::VERSION as u8
-            || first.data[qshell_abi::offset::RECORD_CLASS] != qshell_abi::record_class::CORRECTION
-            || get_u32(&first.data, qshell_abi::offset::SCHEMA_ID)
-                != qshell_abi::schema::MICROBLOSSOM_DECODE_RESULT
-            || get_u32(&first.data, qshell_abi::offset::CONTEXT_ID) != self.route.context_id
-            || get_u32(&first.data, qshell_abi::offset::ROUND_ID) != self.round_id
-            || get_u32(&first.data, qshell_abi::offset::SOURCE_ENDPOINT_ID)
-                != self.route.expected_decoder_endpoint_id.unwrap_or(0)
-            || get_u32(&first.data, qshell_abi::offset::DESTINATION_ENDPOINT_ID)
-                != self.route.source_endpoint_id
-            || get_u32(&first.data, qshell_abi::offset::ROUTE_CAPABILITY_ID)
-                != self.route.route_capability_id
-        {
-            return Err(QshellLinkError::MetadataMismatch);
+        let mut offset = 16;
+        while offset < payload.len() {
+            let valid = (payload.len() - offset).min(qshell_abi::BEAT_BYTES);
+            let mut beat = AxisBeat {
+                data: [0; qshell_abi::BEAT_BYTES],
+                keep: low_keep(valid),
+                last: offset + valid == payload.len(),
+            };
+            beat.data[..valid].copy_from_slice(&payload[offset..offset + valid]);
+            self.send_axis_beat(beat)?;
+            offset += valid;
         }
-        let mut result_payload = [0_u8; COPROCESSOR_PAYLOAD_BYTES];
-        result_payload[..16].copy_from_slice(&first.data[qshell_abi::HEADER_BYTES..]);
-        result_payload[16..].copy_from_slice(&second.data[..32]);
-        if result_payload[..4] != DECODE_RESULT_MAGIC || get_u16(&result_payload, 4) != 1 {
+        Ok(())
+    }
+
+    fn receive_payload_tail(
+        &mut self,
+        first: AxisBeat,
+        payload_bytes: usize,
+    ) -> Result<Vec<u8>, QshellLinkError<Link::Error>> {
+        let first_payload = qshell_abi::BEAT_BYTES - qshell_abi::HEADER_BYTES;
+        if payload_bytes < first_payload
+            || qshell_abi::HEADER_BYTES
+                .checked_add(payload_bytes)
+                .map_or(true, |packet_bytes| packet_bytes > MAX_QSHELL_PACKET_BYTES)
+        {
+            return Err(QshellLinkError::InvalidEnvelopeLength(payload_bytes as u32));
+        }
+        let mut payload = vec![0_u8; payload_bytes];
+        payload[..first_payload].copy_from_slice(&first.data[qshell_abi::HEADER_BYTES..]);
+        let mut offset = first_payload;
+        while offset < payload.len() {
+            let beat = self.receive_axis_beat()?;
+            let valid = (payload.len() - offset).min(qshell_abi::BEAT_BYTES);
+            let expected_keep = low_keep(valid);
+            if beat.keep != expected_keep {
+                return Err(QshellLinkError::InvalidEnvelopeKeep {
+                    expected: expected_keep,
+                    actual: beat.keep,
+                });
+            }
+            let expected_last = offset + valid == payload.len();
+            if beat.last != expected_last {
+                return Err(QshellLinkError::MalformedEnvelope);
+            }
+            payload[offset..offset + valid].copy_from_slice(&beat.data[..valid]);
+            offset += valid;
+        }
+        Ok(payload)
+    }
+
+    pub fn decode(
+        &mut self,
+        request: &DecodeRequest,
+    ) -> Result<DecodeResult, QshellLinkError<Link::Error>> {
+        self.ensure_healthy()?;
+        if request.graph_id != self.contract.graph_id() {
+            return Err(QshellLinkError::RequestGraphMismatch);
+        }
+        if request.defects.len() > self.contract.max_defects()
+            || request.defects.iter().any(|defect| {
+                *defect >= self.contract.vertex_count() || self.contract.is_virtual_vertex(*defect)
+            })
+            || request.defects.windows(2).any(|pair| pair[0] >= pair[1])
+        {
+            return Err(QshellLinkError::InvalidDefects);
+        }
+
+        let mut request_payload = vec![0_u8; self.contract.request_payload_bytes()];
+        request_payload[..4].copy_from_slice(&DECODE_REQUEST_MAGIC);
+        put_u16(&mut request_payload, 4, 1);
+        put_u16(&mut request_payload, 6, request.defects.len() as u16);
+        request_payload[8..40].copy_from_slice(&request.graph_id);
+        for (index, defect) in request.defects.iter().enumerate() {
+            put_u16(
+                &mut request_payload,
+                COPROCESSOR_REQUEST_PREFIX_BYTES + 2 * index,
+                *defect,
+            );
+        }
+        self.send_payload(&request_payload)?;
+
+        // send_payload returns only after the final EOR beat has been accepted
+        // by the link. No response fault can make that round safe to resend.
+        let response = self.receive_decode_response();
+        if response.is_err() {
+            self.poisoned = true;
+        }
+        response
+    }
+
+    fn receive_decode_response(&mut self) -> Result<DecodeResult, QshellLinkError<Link::Error>> {
+        let first = self.receive_axis_beat()?;
+        if first.keep != u64::MAX {
+            return Err(QshellLinkError::InvalidEnvelopeKeep {
+                expected: u64::MAX,
+                actual: first.keep,
+            });
+        }
+        if first.last
+            || get_u32(&first.data, qshell_abi::offset::MAGIC) != qshell_abi::MAGIC
+            || first.data[qshell_abi::offset::ABI_VERSION] != qshell_abi::VERSION
+            || get_u16(&first.data, qshell_abi::offset::HEADER_BYTES)
+                != qshell_abi::HEADER_BYTES as u16
+            || get_u16(&first.data, qshell_abi::offset::RESERVED) != 0
+        {
             return Err(QshellLinkError::MalformedEnvelope);
         }
-        let edge_count = get_u16(&result_payload, 40) as usize;
-        if edge_count > MAX_CORRECTION_EDGES {
+
+        let record_class = first.data[qshell_abi::offset::RECORD_CLASS];
+        if record_class != qshell_abi::record_class::CORRECTION {
+            return Err(QshellLinkError::UnexpectedClass(record_class));
+        }
+        let flags = get_u16(&first.data, qshell_abi::offset::FLAGS);
+        if flags != qshell_abi::flag::END_OF_ROUND {
+            return Err(QshellLinkError::InvalidEnvelopeFlags(flags));
+        }
+        let payload_bytes = get_u32(&first.data, qshell_abi::offset::PAYLOAD_BYTES) as usize;
+        if payload_bytes != self.contract.response_payload_bytes() {
+            return Err(QshellLinkError::InvalidEnvelopeLength(payload_bytes as u32));
+        }
+
+        let result_payload = self.receive_payload_tail(first, payload_bytes)?;
+        if !self.response_identity_matches(&first, qshell_abi::schema::MICROBLOSSOM_DECODE_RESULT) {
+            return Err(QshellLinkError::MetadataMismatch);
+        }
+        if result_payload[..4] != DECODE_RESULT_MAGIC || get_u16(&result_payload, 4) != 1 {
             return Err(QshellLinkError::MalformedEnvelope);
         }
         let mut graph_id = [0_u8; 32];
         graph_id.copy_from_slice(&result_payload[8..40]);
-        let correction_edges = (0..edge_count)
-            .map(|i| get_u16(&result_payload, 44 + 2 * i))
-            .collect();
+        if graph_id != self.contract.graph_id() {
+            return Err(QshellLinkError::ResultGraphMismatch);
+        }
+        let edge_count = get_u16(&result_payload, 40) as usize;
+        if edge_count > self.contract.max_correction_edges() {
+            return Err(QshellLinkError::MalformedEnvelope);
+        }
+        let mut correction_edges = Vec::with_capacity(edge_count);
+        for index in 0..edge_count {
+            let edge = get_u16(&result_payload, COPROCESSOR_RESULT_PREFIX_BYTES + 2 * index);
+            if edge >= self.contract.edge_count() {
+                return Err(QshellLinkError::InvalidCorrectionEdge(edge));
+            }
+            correction_edges.push(edge);
+        }
+        if result_payload[COPROCESSOR_RESULT_PREFIX_BYTES + 2 * edge_count..]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(QshellLinkError::NonzeroPayloadPadding);
+        }
+
         self.round_id = self.round_id.wrapping_add(1);
         Ok(DecodeResult {
             graph_id,
@@ -1753,8 +2138,42 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn coprocessor_decode_codec_round_trips_canonical_d3() {
+    const CIRCUIT_D3_GRAPH_ID: GraphId = [
+        0x3e, 0x6b, 0xfd, 0xfe, 0xb3, 0xcf, 0xdb, 0x3d, 0x47, 0xbf, 0x29, 0xc5, 0xda, 0x33, 0x4d,
+        0x84, 0x84, 0x9a, 0xac, 0xfc, 0x54, 0x8e, 0x01, 0x45, 0xb8, 0xdb, 0x60, 0xd7, 0xf9, 0x92,
+        0xb0, 0x19,
+    ];
+    const CIRCUIT_D9_GRAPH_ID: GraphId = [
+        0x95, 0x82, 0xb1, 0xc0, 0x53, 0x9c, 0x72, 0xa7, 0xea, 0x76, 0xe1, 0xa7, 0xca, 0x72, 0x90,
+        0xdf, 0x36, 0xff, 0x89, 0xf8, 0xe8, 0x4f, 0x53, 0xf6, 0x5f, 0x77, 0xd8, 0x68, 0x99, 0xbb,
+        0xa4, 0x1a,
+    ];
+    const CIRCUIT_D3_VIRTUAL_VERTICES: [u16; 7] = [1, 2, 5, 8, 9, 12, 15];
+    const CIRCUIT_D9_VIRTUAL_VERTICES: [u16; 73] = [
+        1, 5, 11, 19, 20, 29, 37, 43, 47, 50, 54, 60, 68, 69, 78, 86, 92, 96, 99, 103, 109, 117,
+        118, 127, 135, 141, 145, 148, 152, 158, 166, 167, 176, 184, 190, 194, 197, 201, 207, 215,
+        216, 225, 233, 239, 243, 246, 250, 256, 264, 265, 274, 282, 288, 292, 295, 299, 305, 313,
+        314, 323, 331, 337, 341, 344, 348, 354, 362, 363, 372, 380, 386, 390, 393,
+    ];
+
+    fn coprocessor_response_beats(
+        contract: &CoprocessorGraphContract,
+        edges: &[u16],
+    ) -> Vec<AxisBeat> {
+        let mut payload = vec![0_u8; contract.response_payload_bytes()];
+        payload[..4].copy_from_slice(&DECODE_RESULT_MAGIC);
+        put_u16(&mut payload, 4, 1);
+        payload[8..40].copy_from_slice(&contract.graph_id());
+        put_u16(&mut payload, 40, edges.len() as u16);
+        put_u16(&mut payload, 42, 10);
+        for (index, edge) in edges.iter().enumerate() {
+            put_u16(
+                &mut payload,
+                COPROCESSOR_RESULT_PREFIX_BYTES + 2 * index,
+                *edge,
+            );
+        }
+
         let mut first = AxisBeat {
             data: [0; qshell_abi::BEAT_BYTES],
             keep: u64::MAX,
@@ -1765,7 +2184,7 @@ mod tests {
             qshell_abi::offset::MAGIC,
             qshell_abi::MAGIC,
         );
-        first.data[qshell_abi::offset::ABI_VERSION] = qshell_abi::VERSION as u8;
+        first.data[qshell_abi::offset::ABI_VERSION] = qshell_abi::VERSION;
         first.data[qshell_abi::offset::RECORD_CLASS] = qshell_abi::record_class::CORRECTION;
         put_u16(
             &mut first.data,
@@ -1780,7 +2199,7 @@ mod tests {
         put_u32(
             &mut first.data,
             qshell_abi::offset::PAYLOAD_BYTES,
-            COPROCESSOR_PAYLOAD_BYTES as u32,
+            payload.len() as u32,
         );
         put_u32(&mut first.data, qshell_abi::offset::CONTEXT_ID, 7);
         put_u32(&mut first.data, qshell_abi::offset::ROUND_ID, 42);
@@ -1804,36 +2223,445 @@ mod tests {
             qshell_abi::offset::ROUTE_CAPABILITY_ID,
             0x8765_4321,
         );
-        let mut payload = [0_u8; COPROCESSOR_PAYLOAD_BYTES];
-        payload[..4].copy_from_slice(&DECODE_RESULT_MAGIC);
-        put_u16(&mut payload, 4, 1);
-        payload[8..40].copy_from_slice(&GRAPH_ID);
-        put_u16(&mut payload, 40, 1);
-        put_u16(&mut payload, 42, 10);
-        put_u16(&mut payload, 44, 2);
+        put_u32(&mut first.data, qshell_abi::offset::ROUTE_VERSION, 9);
         first.data[qshell_abi::HEADER_BYTES..].copy_from_slice(&payload[..16]);
-        let mut second = AxisBeat {
-            data: [0; qshell_abi::BEAT_BYTES],
-            keep: low_keep(32),
-            last: true,
-        };
-        second.data[..32].copy_from_slice(&payload[16..]);
+
+        let mut beats = vec![first];
+        let mut offset = 16;
+        while offset < payload.len() {
+            let valid = (payload.len() - offset).min(qshell_abi::BEAT_BYTES);
+            let mut beat = AxisBeat {
+                data: [0; qshell_abi::BEAT_BYTES],
+                keep: low_keep(valid),
+                last: offset + valid == payload.len(),
+            };
+            beat.data[..valid].copy_from_slice(&payload[offset..offset + valid]);
+            beats.push(beat);
+            offset += valid;
+        }
+        beats
+    }
+
+    fn circuit_contracts() -> [CoprocessorGraphContract; 2] {
+        [
+            CoprocessorGraphContract::new(
+                CIRCUIT_D3_GRAPH_ID,
+                19,
+                39,
+                &CIRCUIT_D3_VIRTUAL_VERTICES,
+            )
+            .unwrap(),
+            CoprocessorGraphContract::new(
+                CIRCUIT_D9_GRAPH_ID,
+                433,
+                1737,
+                &CIRCUIT_D9_VIRTUAL_VERTICES,
+            )
+            .unwrap(),
+        ]
+    }
+
+    fn decode_with_edges(
+        contract: CoprocessorGraphContract,
+        defects: Vec<u16>,
+        edges: Vec<u16>,
+    ) -> (DecodeResult, CoprocessorQshellLink<MockBeatLink>) {
         let mut beats = MockBeatLink::default();
-        beats.responses.extend([first, second]);
-        let mut link = CoprocessorQshellLink::new(beats, route());
-        let result = link
-            .decode(&DecodeRequest {
-                graph_id: GRAPH_ID,
+        beats
+            .responses
+            .extend(coprocessor_response_beats(&contract, &edges));
+        let graph_id = contract.graph_id();
+        let mut link = CoprocessorQshellLink::new(beats, route(), contract, 9);
+        let result = link.decode(&DecodeRequest { graph_id, defects }).unwrap();
+        (result, link)
+    }
+
+    fn assert_poisoned_without_resend(
+        link: &mut CoprocessorQshellLink<MockBeatLink>,
+        request: &DecodeRequest,
+        expected_request_beats: usize,
+    ) {
+        assert!(link.poisoned());
+        assert_eq!(link.link().sent.len(), expected_request_beats);
+        assert!(matches!(
+            link.decode(request),
+            Err(QshellLinkError::LinkPoisoned)
+        ));
+        assert_eq!(link.link().sent.len(), expected_request_beats);
+    }
+
+    #[test]
+    fn coprocessor_contract_derives_frozen_circuit_bounds() {
+        let d3 = CoprocessorGraphContract::new(
+            CIRCUIT_D3_GRAPH_ID,
+            19,
+            39,
+            &CIRCUIT_D3_VIRTUAL_VERTICES,
+        )
+        .unwrap();
+        assert_eq!(d3.max_defects(), 12);
+        assert_eq!(d3.request_payload_bytes(), 64);
+        assert_eq!(d3.request_packet_bytes(), 112);
+        assert_eq!(d3.request_beats(), 2);
+        assert_eq!(d3.response_payload_bytes(), 122);
+        assert_eq!(d3.response_packet_bytes(), 170);
+        assert_eq!(d3.response_beats(), 3);
+        assert!(d3.has_exact_graph_capacities());
+
+        let legacy =
+            CoprocessorGraphContract::new_with_capacities(GRAPH_ID, 4, 3, &[2, 3], 4, 2).unwrap();
+        assert_eq!(legacy.request_packet_bytes(), 96);
+        assert_eq!(legacy.response_packet_bytes(), 96);
+        assert_eq!(legacy.request_beats(), 2);
+        assert_eq!(legacy.response_beats(), 2);
+        assert!(!legacy.has_exact_graph_capacities());
+
+        let d9 = CoprocessorGraphContract::new(
+            CIRCUIT_D9_GRAPH_ID,
+            433,
+            1737,
+            &CIRCUIT_D9_VIRTUAL_VERTICES,
+        )
+        .unwrap();
+        assert_eq!(d9.max_defects(), 360);
+        assert_eq!(d9.request_payload_bytes(), 760);
+        assert_eq!(d9.request_packet_bytes(), 808);
+        assert_eq!(d9.request_beats(), 13);
+        assert_eq!(d9.response_payload_bytes(), 3518);
+        assert_eq!(d9.response_packet_bytes(), 3566);
+        assert_eq!(d9.response_beats(), 56);
+        assert!(d9.response_packet_bytes() <= MAX_QSHELL_PACKET_BYTES);
+
+        assert_eq!(
+            CoprocessorGraphContract::new(CIRCUIT_D9_GRAPH_ID, u16::MAX, u16::MAX, &[]),
+            Err(CoprocessorContractError::PacketStorageExceeded)
+        );
+    }
+
+    #[test]
+    fn coprocessor_decode_preserves_multibeat_order_at_d9_bounds() {
+        let contract = CoprocessorGraphContract::new(
+            CIRCUIT_D9_GRAPH_ID,
+            433,
+            1737,
+            &CIRCUIT_D9_VIRTUAL_VERTICES,
+        )
+        .unwrap();
+        let defects: Vec<_> = (0..contract.vertex_count())
+            .filter(|vertex| !contract.is_virtual_vertex(*vertex))
+            .collect();
+        let edges: Vec<_> = (0..contract.edge_count()).rev().collect();
+        let (result, link) = decode_with_edges(contract, defects.clone(), edges.clone());
+
+        assert_eq!(result.graph_id, CIRCUIT_D9_GRAPH_ID);
+        assert_eq!(result.correction_edges, edges);
+        assert_eq!(link.link().sent.len(), 13);
+        assert!(link.link().sent[..12]
+            .iter()
+            .all(|beat| beat.keep == u64::MAX && !beat.last));
+        assert_eq!(link.link().sent[12].keep, low_keep(40));
+        assert!(link.link().sent[12].last);
+        assert_eq!(
+            get_u32(
+                &link.link().sent[0].data,
+                qshell_abi::offset::DESTINATION_ENDPOINT_ID,
+            ),
+            0
+        );
+        assert_eq!(
+            get_u32(&link.link().sent[0].data, qshell_abi::offset::ROUTE_VERSION,),
+            0
+        );
+        assert_eq!(link.expected_route_version(), 9);
+        assert_eq!(
+            get_u32(&link.link().sent[0].data, qshell_abi::offset::PAYLOAD_BYTES),
+            760
+        );
+        let mut request_payload = Vec::with_capacity(760);
+        request_payload.extend_from_slice(&link.link().sent[0].data[qshell_abi::HEADER_BYTES..]);
+        for beat in &link.link().sent[1..] {
+            request_payload.extend_from_slice(&beat.data[..beat.keep.count_ones() as usize]);
+        }
+        assert_eq!(request_payload.len(), 760);
+        for (index, defect) in defects.iter().enumerate() {
+            assert_eq!(
+                get_u16(
+                    &request_payload,
+                    COPROCESSOR_REQUEST_PREFIX_BYTES + 2 * index,
+                ),
+                *defect
+            );
+        }
+        assert_eq!(link.round_id, 43);
+    }
+
+    #[test]
+    fn coprocessor_decode_poisons_after_malformed_accepted_round_without_resend() {
+        for contract in circuit_contracts() {
+            let request = DecodeRequest {
+                graph_id: contract.graph_id(),
+                defects: vec![0],
+            };
+            let mut malformed = coprocessor_response_beats(&contract, &[0]);
+            malformed[1].keep = low_keep(63);
+
+            let mut beats = MockBeatLink::default();
+            beats.responses.extend(malformed);
+            let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+            assert!(matches!(
+                link.decode(&request),
+                Err(QshellLinkError::InvalidEnvelopeKeep { .. })
+            ));
+            assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+        }
+    }
+
+    #[test]
+    fn coprocessor_decode_rejects_72_byte_in_band_error_without_endpoint_semantics() {
+        for contract in circuit_contracts() {
+            let request = DecodeRequest {
+                graph_id: contract.graph_id(),
+                defects: vec![0],
+            };
+            let mut first = coprocessor_response_beats(&contract, &[]).remove(0);
+            first.data[qshell_abi::offset::RECORD_CLASS] = qshell_abi::record_class::ERROR;
+            put_u16(&mut first.data, qshell_abi::offset::FLAGS, 0);
+            put_u32(&mut first.data, qshell_abi::offset::PAYLOAD_BYTES, 24);
+            put_u32(
+                &mut first.data,
+                qshell_abi::offset::SCHEMA_ID,
+                qshell_abi::schema::ERROR,
+            );
+
+            let mut beats = MockBeatLink::default();
+            beats.responses.push_back(first);
+            let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+            assert!(matches!(
+                link.decode(&request),
+                Err(QshellLinkError::UnexpectedClass(class))
+                    if class == qshell_abi::record_class::ERROR
+            ));
+            assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+        }
+    }
+
+    #[test]
+    fn coprocessor_decode_validates_normal_identity_and_poisons_session() {
+        let contract = circuit_contracts()[0].clone();
+        let request = DecodeRequest {
+            graph_id: contract.graph_id(),
+            defects: vec![0],
+        };
+        let header_mutations = [
+            (qshell_abi::offset::CONTEXT_ID, 8),
+            (qshell_abi::offset::ROUND_ID, 43),
+            (qshell_abi::offset::SCHEMA_ID, qshell_abi::schema::ERROR),
+            (qshell_abi::offset::SOURCE_ENDPOINT_ID, 0x102),
+            (qshell_abi::offset::DESTINATION_ENDPOINT_ID, 0x13),
+            (qshell_abi::offset::ROUTE_CAPABILITY_ID, 0x8765_4322),
+            (qshell_abi::offset::ROUTE_VERSION, 0),
+            (qshell_abi::offset::ROUTE_VERSION, 8),
+            (qshell_abi::offset::RECORD_SEQUENCE, 1),
+        ];
+        for (offset, value) in header_mutations {
+            let mut response = coprocessor_response_beats(&contract, &[0]);
+            put_u32(&mut response[0].data, offset, value);
+            let mut beats = MockBeatLink::default();
+            beats.responses.extend(response);
+            let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+            assert!(matches!(
+                link.decode(&request),
+                Err(QshellLinkError::MetadataMismatch)
+            ));
+            assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+        }
+
+        let mut response = coprocessor_response_beats(&contract, &[0]);
+        response[0].data[qshell_abi::offset::RECORD_CLASS] = qshell_abi::record_class::CONTROL;
+        let mut beats = MockBeatLink::default();
+        beats.responses.extend(response);
+        let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+        assert!(matches!(
+            link.decode(&request),
+            Err(QshellLinkError::UnexpectedClass(
+                qshell_abi::record_class::CONTROL
+            ))
+        ));
+        assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+
+        let mut response = coprocessor_response_beats(&contract, &[0]);
+        response[0].data[qshell_abi::HEADER_BYTES + 8] ^= 1;
+        let mut beats = MockBeatLink::default();
+        beats.responses.extend(response);
+        let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+        assert!(matches!(
+            link.decode(&request),
+            Err(QshellLinkError::ResultGraphMismatch)
+        ));
+        assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+
+        let mut beats = MockBeatLink::default();
+        beats
+            .responses
+            .extend(coprocessor_response_beats(&contract, &[0]));
+        let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 0);
+        assert!(matches!(
+            link.decode(&request),
+            Err(QshellLinkError::MetadataMismatch)
+        ));
+        assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+    }
+
+    #[test]
+    fn coprocessor_decode_poisons_response_timeout_without_resend() {
+        let contract = circuit_contracts()[0].clone();
+        let request = DecodeRequest {
+            graph_id: contract.graph_id(),
+            defects: vec![0],
+        };
+        let mut link =
+            CoprocessorQshellLink::new(MockBeatLink::default(), route(), contract.clone(), 9);
+        assert!(matches!(
+            link.decode(&request),
+            Err(QshellLinkError::Link("beat queue empty"))
+        ));
+        assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+    }
+
+    #[test]
+    fn coprocessor_decode_requires_fresh_epoch_and_capability_after_poison() {
+        let contract = circuit_contracts()[0].clone();
+        let request = DecodeRequest {
+            graph_id: contract.graph_id(),
+            defects: vec![0],
+        };
+        let mut malformed = coprocessor_response_beats(&contract, &[0]);
+        malformed[0].data[qshell_abi::offset::MAGIC] ^= 1;
+        let mut old_beats = MockBeatLink::default();
+        old_beats.responses.extend(malformed);
+        let mut old_link = CoprocessorQshellLink::new(old_beats, route(), contract.clone(), 9);
+        assert!(matches!(
+            old_link.decode(&request),
+            Err(QshellLinkError::MalformedEnvelope)
+        ));
+        assert_poisoned_without_resend(&mut old_link, &request, contract.request_beats());
+
+        let mut fresh_route = route();
+        fresh_route.context_id = 8;
+        fresh_route.initial_round_id = 100;
+        fresh_route.route_capability_id = 0x8765_4322;
+        let fresh_route_version = 10;
+        let mut response = coprocessor_response_beats(&contract, &[0]);
+        put_u32(
+            &mut response[0].data,
+            qshell_abi::offset::CONTEXT_ID,
+            fresh_route.context_id,
+        );
+        put_u32(
+            &mut response[0].data,
+            qshell_abi::offset::ROUND_ID,
+            fresh_route.initial_round_id,
+        );
+        put_u32(
+            &mut response[0].data,
+            qshell_abi::offset::ROUTE_CAPABILITY_ID,
+            fresh_route.route_capability_id,
+        );
+        put_u32(
+            &mut response[0].data,
+            qshell_abi::offset::ROUTE_VERSION,
+            fresh_route_version,
+        );
+        let mut fresh_beats = MockBeatLink::default();
+        fresh_beats.responses.extend(response);
+        let mut fresh_link = CoprocessorQshellLink::new(
+            fresh_beats,
+            fresh_route,
+            contract.clone(),
+            fresh_route_version,
+        );
+        assert_eq!(
+            fresh_link.decode(&request).unwrap().correction_edges,
+            vec![0]
+        );
+        assert!(!fresh_link.poisoned());
+        assert_eq!(fresh_link.round_id, 101);
+        assert_eq!(fresh_link.link().sent.len(), contract.request_beats());
+    }
+
+    #[test]
+    fn coprocessor_decode_rejects_identity_bounds_and_nonzero_padding() {
+        let contract = CoprocessorGraphContract::new(
+            CIRCUIT_D3_GRAPH_ID,
+            19,
+            39,
+            &CIRCUIT_D3_VIRTUAL_VERTICES,
+        )
+        .unwrap();
+        let mut retryable_beats = MockBeatLink::default();
+        retryable_beats
+            .responses
+            .extend(coprocessor_response_beats(&contract, &[0]));
+        let mut link = CoprocessorQshellLink::new(retryable_beats, route(), contract.clone(), 9);
+        assert!(matches!(
+            link.decode(&DecodeRequest {
+                graph_id: CIRCUIT_D9_GRAPH_ID,
+                defects: vec![0],
+            }),
+            Err(QshellLinkError::RequestGraphMismatch)
+        ));
+        assert!(matches!(
+            link.decode(&DecodeRequest {
+                graph_id: CIRCUIT_D3_GRAPH_ID,
+                defects: vec![0, 0],
+            }),
+            Err(QshellLinkError::InvalidDefects)
+        ));
+        assert!(matches!(
+            link.decode(&DecodeRequest {
+                graph_id: CIRCUIT_D3_GRAPH_ID,
+                defects: vec![1],
+            }),
+            Err(QshellLinkError::InvalidDefects)
+        ));
+        assert!(link.link().sent.is_empty());
+        assert!(!link.poisoned());
+        assert_eq!(
+            link.decode(&DecodeRequest {
+                graph_id: CIRCUIT_D3_GRAPH_ID,
                 defects: vec![0],
             })
-            .unwrap();
-        assert_eq!(result.correction_edges, vec![2]);
-        assert_eq!(result.accelerator_operations, 10);
-        assert_eq!(link.link.sent.len(), 2);
-        assert_eq!(
-            get_u32(&link.link.sent[0].data, qshell_abi::offset::SCHEMA_ID),
-            qshell_abi::schema::MICROBLOSSOM_DECODE_REQUEST
+            .unwrap()
+            .correction_edges,
+            vec![0]
         );
+
+        let mut beats = MockBeatLink::default();
+        let mut response = coprocessor_response_beats(&contract, &[0]);
+        response[2].data[41] = 1;
+        beats.responses.extend(response);
+        let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+        let request = DecodeRequest {
+            graph_id: CIRCUIT_D3_GRAPH_ID,
+            defects: vec![0],
+        };
+        assert!(matches!(
+            link.decode(&request),
+            Err(QshellLinkError::NonzeroPayloadPadding)
+        ));
+        assert_eq!(link.round_id, 42);
+        assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
+
+        let mut beats = MockBeatLink::default();
+        beats
+            .responses
+            .extend(coprocessor_response_beats(&contract, &[39]));
+        let mut link = CoprocessorQshellLink::new(beats, route(), contract.clone(), 9);
+        assert!(matches!(
+            link.decode(&request),
+            Err(QshellLinkError::InvalidCorrectionEdge(39))
+        ));
+        assert_poisoned_without_resend(&mut link, &request, contract.request_beats());
     }
 
     #[test]

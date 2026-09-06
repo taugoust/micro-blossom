@@ -72,6 +72,7 @@
             "src/cpu/blossom/tests/nix_d3_golden.rs"
             "src/cpu/blossom/tests/nix_d3_qshell_golden.rs"
             "src/cpu/embedded/build.rs"
+            "src/cpu/r5-service-rust/**/*.rs"
             "src/qshell/**/*.rs"
           ];
         };
@@ -113,9 +114,27 @@
             sha256 = rustManifestSha256;
           };
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
+          r5RustTarget = "armv7r-none-eabi";
+          r5RustTargetToolchain = fenix.packages.${system}.targets.${r5RustTarget}.toolchainOf {
+            channel = "nightly";
+            date = "2023-11-16";
+            sha256 = rustManifestSha256;
+          };
+          r5RustToolchain = fenix.packages.${system}.combine [
+            rustToolchain
+            r5RustTargetToolchain.rust-std
+          ];
+          r5CraneLib = (crane.mkLib pkgs).overrideToolchain r5RustToolchain;
+          r5PolicyPython = pkgs.python3.withPackages (packages: [ packages.pyelftools ]);
           # Crane's default dummy uses syntax newer than the pinned 2023 nightly.
           craneDummySource = pkgs.writeText "microblossom-crane-dummy.rs" ''
             fn main() { }
+          '';
+          r5CraneDummySource = pkgs.writeText "microblossom-r5-crane-dummy.rs" ''
+            #![no_std]
+            use core::panic::PanicInfo;
+            #[panic_handler]
+            fn panic(_information: &PanicInfo<'_>) -> ! { loop { } }
           '';
 
           rustSource = lib.fileset.toSource {
@@ -131,6 +150,19 @@
           protocolSource = lib.fileset.toSource {
             root = ./src/qshell/protocol;
             fileset = craneLib.fileset.commonCargoSources ./src/qshell/protocol;
+          };
+
+          r5RustSource = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              (r5CraneLib.fileset.commonCargoSources ./src/cpu/r5-service-rust)
+              ./src/cpu/r5-service-rust/include/microblossom_rust_service.h
+              ./src/cpu/r5-service-rust/rust-toolchain.toml
+              ./src/cpu/blossom
+              ./src/cpu/blossom-nostd
+              ./src/cpu/embedded
+              ./src/qshell/protocol
+            ];
           };
 
           scalaSource = lib.fileset.toSource {
@@ -246,7 +278,7 @@
             protocolCommonArgs
             // {
               cargoArtifacts = protocolCargoArtifacts;
-              buildPhaseCargoCommand = "cargo build --profile release --locked --bin microblossom_d3_coprocessor && cargo test --profile release --locked --no-run";
+              buildPhaseCargoCommand = "cargo build --profile release --locked --bin microblossom_d3_coprocessor --bin microblossom_coprocessor && cargo test --profile release --locked --no-run";
               doCheck = true;
               checkPhaseCargoCommand = "cargo test --profile release --locked";
               doInstallCargoArtifacts = false;
@@ -254,9 +286,11 @@
                 contract="$out/share/microblossom/qshell-protocol"
                 mkdir -p "$out/bin" "$contract/src/bin"
                 install -m755 target/release/microblossom_d3_coprocessor "$out/bin/"
+                install -m755 target/release/microblossom_coprocessor "$out/bin/"
                 cp Cargo.toml Cargo.lock "$contract/"
                 cp src/lib.rs src/qshell_abi_generated.rs "$contract/src/"
                 cp src/bin/microblossom_d3_coprocessor.rs "$contract/src/bin/"
+                cp src/bin/microblossom_coprocessor.rs "$contract/src/bin/"
                 cp ${./src/qshell/README.md} "$contract/README.md"
               '';
 
@@ -969,6 +1003,523 @@
             }
           ) { } (lib.attrValues graphMatrix);
 
+          graphSpecById =
+            id:
+            lib.findFirst (spec: spec.id == id) (throw "missing MicroBlossom graph spec: ${id}") graphSpecs;
+          packetBeats = bytes: builtins.div (bytes + 63) 64;
+          mkR5ServiceDefinition =
+            {
+              key,
+              specId,
+              outputPrefix,
+              runnerBinary,
+              maxDefects ? null,
+              maxCorrectionEdges ? null,
+              rustService ? false,
+              rustArchiveSha256 ? null,
+            }:
+            let
+              spec = graphSpecById specId;
+              effectiveMaxDefects =
+                if maxDefects == null then spec.vertexNum - spec.virtualVertexNum else maxDefects;
+              effectiveMaxCorrectionEdges =
+                if maxCorrectionEdges == null then spec.edgeNum else maxCorrectionEdges;
+              requestPayloadBytes = 40 + 2 * effectiveMaxDefects;
+              responsePayloadBytes = 44 + 2 * effectiveMaxCorrectionEdges;
+              requestPacketBytes = 48 + requestPayloadBytes;
+              responsePacketBytes = 48 + responsePayloadBytes;
+            in
+            {
+              inherit
+                key
+                spec
+                outputPrefix
+                runnerBinary
+                effectiveMaxDefects
+                effectiveMaxCorrectionEdges
+                requestPayloadBytes
+                responsePayloadBytes
+                requestPacketBytes
+                responsePacketBytes
+                rustService
+                rustArchiveSha256
+                ;
+              requestBeats = packetBeats requestPacketBytes;
+              responseBeats = packetBeats responsePacketBytes;
+              legacyCompatible = maxDefects != null || maxCorrectionEdges != null;
+            };
+          r5ServiceDefinitions = lib.listToAttrs (
+            map
+              (definition: lib.nameValuePair definition.key definition)
+              [
+                (mkR5ServiceDefinition {
+                  key = "legacy-d3";
+                  specId = "code-capacity-repetition-d3";
+                  outputPrefix = "microblossom-d3";
+                  runnerBinary = "microblossom_d3_coprocessor";
+                  maxDefects = 4;
+                  maxCorrectionEdges = 2;
+                })
+                (mkR5ServiceDefinition {
+                  key = "circuit-level-d3";
+                  specId = "circuit-level-d3";
+                  outputPrefix = "microblossom-circuit-level-d3";
+                  runnerBinary = "microblossom_circuit_d3_coprocessor";
+                  rustService = true;
+                  rustArchiveSha256 = "c7fea40eb54a2f67bd4c331428cf49e1adc7b5700e87732fe5626e955ab9503b";
+                })
+                (mkR5ServiceDefinition {
+                  key = "circuit-level-d9";
+                  specId = "circuit-level-d9";
+                  outputPrefix = "microblossom-circuit-level-d9";
+                  runnerBinary = "microblossom_circuit_d9_coprocessor";
+                  rustService = true;
+                  rustArchiveSha256 = "a56765e31ead4713babbcbbea8371c2b3853579db5a202158c063b7e50d8677a";
+                })
+              ]
+          );
+          mkR5RustService =
+            name: definition:
+            let
+              graphContract = graphServiceContracts.${name};
+              graphContractRoot =
+                "${graphContract}/share/microblossom/r5-service/${definition.spec.id}-v1";
+              graphModule = "${graphContractRoot}/microblossom_graph.rs";
+              expectedArchiveSha256 =
+                if definition.rustArchiveSha256 == null then "" else definition.rustArchiveSha256;
+              archiveBuildIdentity = builtins.hashString "sha256" (
+                lib.concatStringsSep "\n" [
+                  "microblossom-r5-rust-service-archive-v3"
+                  "features=default-disabled,service-model-forbidden"
+                  "undefined-allowlist=fmaxl,logbl,scalbnl"
+                  r5RustTarget
+                  "nightly-2023-11-16"
+                  rustManifestSha256
+                  fenix.rev
+                  crane.rev
+                  definition.spec.id
+                  definition.spec.graphSha256
+                  (toString definition.spec.vertexNum)
+                  (toString definition.spec.edgeNum)
+                  (toString definition.effectiveMaxDefects)
+                  (toString definition.effectiveMaxCorrectionEdges)
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service-rust/Cargo.toml)
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service-rust/Cargo.lock)
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service-rust/rust-toolchain.toml)
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service-rust/src/lib.rs)
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service-rust/src/materializer.rs)
+                  (builtins.hashString "sha256" (toString r5RustSource))
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service-rust/include/microblossom_rust_service.h)
+                  (builtins.hashFile "sha256" ./src/cpu/r5-service/check_r5_binary.py)
+                  (builtins.hashFile "sha256" ./src/qshell/tools/build_graph_service_contract.py)
+                ]
+              );
+            in
+            assert definition.rustService;
+            r5CraneLib.buildPackage {
+              pname = "${definition.outputPrefix}-r5-rust-service";
+              version = "0.1.0";
+              src = r5RustSource;
+              cargoLock = ./src/cpu/r5-service-rust/Cargo.lock;
+              strictDeps = true;
+              postUnpack = ''
+                sourceRoot="$sourceRoot/src/cpu/r5-service-rust"
+              '';
+              nativeBuildInputs = [
+                coyoteTools.armr5
+                pkgs.jq
+                r5PolicyPython
+              ];
+              COYOTE_NIX_XILINX_VERSION = r5PlatformContract.xilinxVersion;
+              CARGO_BUILD_TARGET = r5RustTarget;
+              CARGO_TARGET_ARMV7R_NONE_EABI_LINKER = "armr5-none-eabi-gcc";
+              CARGO_INCREMENTAL = "0";
+              SOURCE_DATE_EPOCH = "1";
+              MICROBLOSSOM_R5_GRAPH_MODULE = graphModule;
+              RUSTFLAGS = lib.concatStringsSep " " [
+                "-C target-cpu=cortex-r5"
+                "-C force-unwind-tables=no"
+                "-C relocation-model=static"
+                "-C code-model=small"
+                "-C debuginfo=0"
+                "-Z emit-stack-sizes"
+                "--remap-path-prefix=${r5RustSource}=."
+              ];
+              cargoExtraArgs = "--locked --lib --no-default-features";
+              dummyrs = r5CraneDummySource;
+              dummyBuildrs = craneDummySource;
+              doCheck = false;
+              doInstallCargoArtifacts = false;
+              dontStrip = true;
+              installPhaseCommand = ''
+                raw_archive=target/${r5RustTarget}/release/libmicroblossom_r5_service.a
+                archive=libmicroblossom_r5_service.a
+                test -s "$raw_archive"
+
+                rustc --version --verbose > rustc-version.txt
+                rustc -Z unstable-options --print target-spec-json \
+                  --target ${r5RustTarget} > target-spec.json
+                rustc --print cfg --target ${r5RustTarget} | LC_ALL=C sort > target-cfg.txt
+                jq -e '
+                  .["is-builtin"] == true and
+                  .["llvm-target"] == "armv7r-none-eabi" and
+                  .abi == "eabi" and
+                  .arch == "arm" and
+                  .["target-pointer-width"] == "32" and
+                  .["panic-strategy"] == "abort" and
+                  .["relocation-model"] == "static"
+                ' target-spec.json >/dev/null
+                grep -Fx 'target_abi="eabi"' target-cfg.txt >/dev/null
+                grep -Fx 'target_arch="arm"' target-cfg.txt >/dev/null
+                grep -Fx 'target_endian="little"' target-cfg.txt >/dev/null
+                grep -Fx 'target_feature="rclass"' target-cfg.txt >/dev/null
+                grep -Fx 'target_os="none"' target-cfg.txt >/dev/null
+                grep -Fx 'target_pointer_width="32"' target-cfg.txt >/dev/null
+                if grep -E 'target_feature="(neon|vfp[^" ]*)"' target-cfg.txt; then
+                  echo 'armv7r-none-eabi unexpectedly enables a hardware-float feature' >&2
+                  exit 1
+                fi
+
+                ${r5PolicyPython}/bin/python ${./src/cpu/r5-service/check_r5_binary.py} \
+                  --kind archive --input "$raw_archive" --allow-cantunwind \
+                  --allow-undefined fmaxl --allow-undefined logbl \
+                  --allow-undefined scalbnl \
+                  --require-function microblossom_rust_service_decode \
+                  --require-object microblossom_rust_service_contract \
+                  --output raw-archive-policy.json
+                armr5-none-eabi-readelf -h -S -A "$raw_archive" > raw-readelf.txt
+                armr5-none-eabi-objcopy \
+                  '--remove-section=.ARM.exidx*' '--remove-section=.ARM.extab*' \
+                  "$raw_archive" "$archive"
+                ${r5PolicyPython}/bin/python ${./src/cpu/r5-service/check_r5_binary.py} \
+                  --kind archive --input "$archive" \
+                  --allow-undefined fmaxl --allow-undefined logbl \
+                  --allow-undefined scalbnl \
+                  --require-function microblossom_rust_service_decode \
+                  --require-object microblossom_rust_service_contract \
+                  --output archive-policy.json
+                armr5-none-eabi-ar t "$archive" > archive-members.txt
+                armr5-none-eabi-readelf -h -S -A "$archive" > readelf.txt
+                armr5-none-eabi-nm -A -g "$archive" > symbols.txt
+                armr5-none-eabi-nm -A -u "$archive" > undefined-symbols.txt
+                armr5-none-eabi-size -A "$archive" > size.txt
+                armr5-none-eabi-objdump -d "$archive" > disassembly.txt
+                ${pkgs.llvmPackages.llvm}/bin/llvm-readobj --stack-sizes "$archive" \
+                  > rust-stack-sizes.txt
+                grep -F 'microblossom_rust_service_decode' symbols.txt >/dev/null
+                if grep -E \
+                  'microblossom_rust_software_accelerator_|fusion_blossom|dual_module_comb' \
+                  symbols.txt; then
+                  echo 'target archive contains a test-only service-model symbol' >&2
+                  exit 1
+                fi
+                grep -E 'Tag_CPU_arch_profile:[[:space:]]+Realtime' readelf.txt >/dev/null
+                grep -E 'Tag_CPU_arch:[[:space:]]+v7' readelf.txt >/dev/null
+                if grep -E 'Tag_ABI_VFP_args:.*VFP registers' readelf.txt; then
+                  echo 'Rust archive uses the hard-float parameter ABI' >&2
+                  exit 1
+                fi
+
+                archive_sha256="$(sha256sum "$archive" | cut -d' ' -f1)"
+                expected_archive_sha256='${expectedArchiveSha256}'
+                if [ -n "$expected_archive_sha256" ]; then
+                  test "$archive_sha256" = "$expected_archive_sha256"
+                fi
+
+                mkdir -p "$out/lib" "$out/include" "$out/analysis" "$out/metadata" \
+                  "$out/share/microblossom/r5-service"
+                cp "$archive" "$out/lib/"
+                cp ${./src/cpu/r5-service-rust/include/microblossom_rust_service.h} \
+                  "$out/include/microblossom_rust_service.h"
+                cp ${graphModule} \
+                  "$out/share/microblossom/r5-service/microblossom_graph.rs"
+                cp archive-members.txt archive-policy.json disassembly.txt raw-archive-policy.json \
+                  raw-readelf.txt readelf.txt rustc-version.txt rust-stack-sizes.txt \
+                  size.txt symbols.txt target-cfg.txt target-spec.json \
+                  undefined-symbols.txt "$out/analysis/"
+                printf '%s\n' "$archive_sha256" > "$out/metadata/archive-sha256"
+                printf '%s\n' '${archiveBuildIdentity}' > "$out/metadata/build-identity"
+                jq -n \
+                  --arg api 'microblossom.r5-rust-service/v1' \
+                  --arg graphId '${definition.spec.id}' \
+                  --arg graphSha256 '${definition.spec.graphSha256}' \
+                  --arg target '${r5RustTarget}' \
+                  --arg toolchain 'nightly-2023-11-16' \
+                  --arg archive 'lib/libmicroblossom_r5_service.a' \
+                  --arg archiveSha256 "$archive_sha256" \
+                  --arg buildIdentity '${archiveBuildIdentity}' \
+                  --argjson vertexCount ${toString definition.spec.vertexNum} \
+                  --argjson edgeCount ${toString definition.spec.edgeNum} \
+                  --argjson maxDefects ${toString definition.effectiveMaxDefects} \
+                  --argjson maxCorrectionEdges ${toString definition.effectiveMaxCorrectionEdges} \
+                  --argjson vertexBits "$(jq -er '.graph.vertexBits' \
+                    ${graphContractRoot}/graph-service-contract.json)" \
+                  --argjson nodeCapacity "$(jq -er '.graph.nodeCapacity' \
+                    ${graphContractRoot}/graph-service-contract.json)" \
+                  --argjson graphRodataBytes "$(jq -er '.graph.materializer.rodataBytes' \
+                    ${graphContractRoot}/graph-service-contract.json)" \
+                  --argjson materializerWorkspaceBytes "$(jq -er \
+                    '.graph.materializer.projectedWorkspaceBytes' \
+                    ${graphContractRoot}/graph-service-contract.json)" \
+                  '{api:$api, graphId:$graphId, graphSha256:$graphSha256,
+                    target:$target, toolchain:$toolchain, archive:$archive,
+                    archiveSha256:$archiveSha256, buildIdentity:$buildIdentity,
+                    vertexCount:$vertexCount, edgeCount:$edgeCount,
+                    vertexBits:$vertexBits, nodeCapacity:$nodeCapacity,
+                    maxDefects:$maxDefects, maxCorrectionEdges:$maxCorrectionEdges,
+                    materializer:{algorithm:"bounded-csr-dijkstra-xor-edge-bitmap",
+                      graphRodataBytes:$graphRodataBytes,
+                      projectedWorkspaceBytes:$materializerWorkspaceBytes},
+                    features:[], defaultFeatures:false, serviceModel:false,
+                    stackFrames:{path:"analysis/rust-stack-sizes.txt",
+                      scope:"compiler-emitted-fixed-frames-only"},
+                    allocator:false, unwind:false, panic:"abort"}' \
+                  > "$out/metadata/rust-service.json"
+                (cd "$out" && find analysis include lib metadata share -type f \
+                  ! -name artifacts.sha256 -print0 | sort -z | xargs -0 sha256sum) \
+                  > "$out/metadata/artifacts.sha256"
+              '';
+              passthru.microblossomR5RustService = {
+                api = "microblossom.r5-rust-service/v1";
+                target = r5RustTarget;
+                toolchain = "nightly-2023-11-16";
+                inherit archiveBuildIdentity;
+                archiveSha256 = definition.rustArchiveSha256;
+                archive = "lib/libmicroblossom_r5_service.a";
+                header = "include/microblossom_rust_service.h";
+                graphModule = "share/microblossom/r5-service/microblossom_graph.rs";
+              };
+              meta = {
+                description = "Graph-bound no-std soft-float R5 service archive";
+                license = lib.licenses.mit;
+                platforms = systems;
+              };
+            };
+          r5RustServices = lib.mapAttrs mkR5RustService (
+            lib.filterAttrs (_name: definition: definition.rustService) r5ServiceDefinitions
+          );
+          mkR5RustMaterializerTest =
+            name: definition:
+            let
+              graphContract = graphServiceContracts.${name};
+              graphContractRoot =
+                "${graphContract}/share/microblossom/r5-service/${definition.spec.id}-v1";
+              graphModule = "${graphContractRoot}/microblossom_graph.rs";
+              rtlRoot = "${graphMatrix.${definition.spec.id}.rtl}/share/microblossom/rtl/${definition.spec.id}-v1";
+              expectedCases = if name == "circuit-level-d3" then 7 else 6;
+            in
+            craneLib.mkCargoDerivation {
+              pname = "${definition.outputPrefix}-r5-rust-materializer-test";
+              version = "0.1.0";
+              src = r5RustSource;
+              cargoLock = ./src/cpu/r5-service-rust/Cargo.lock;
+              cargoArtifacts = null;
+              strictDeps = true;
+              nativeBuildInputs = [ pkgs.python3 ];
+              postUnpack = ''
+                sourceRoot="$sourceRoot/src/cpu/r5-service-rust"
+              '';
+              MICROBLOSSOM_R5_GRAPH_MODULE = graphModule;
+              MICROBLOSSOM_SKIP_CBINDGEN = "1";
+              RUSTFLAGS = "--remap-path-prefix=${r5RustSource}=.";
+              buildPhaseCargoCommand = ''
+                export MICROBLOSSOM_R5_ACTUAL_HARDWARE_INFO_WORD_1="$(${pkgs.python3}/bin/python3 - ${rtlRoot}/MicroBlossomBus.v <<'PY'
+                import re
+                import sys
+                from pathlib import Path
+
+                rtl = Path(sys.argv[1]).read_text()
+                fields = re.search(
+                    r"assign _zz_rawFactory_readRsp_data_2 = "
+                    r"\{\{\{\{\{8'h([0-9a-fA-F]{2}),configurationBits\},"
+                    r"8'h([0-9a-fA-F]{2})\},8'h([0-9a-fA-F]{2})\},"
+                    r"8'h([0-9a-fA-F]{2})\},8'h([0-9a-fA-F]{2})\};",
+                    rtl,
+                )
+                assert fields is not None, "generated hardware-info word 1 was not found"
+                layer_count, instruction_depth, weight_bits, vertex_bits, conflicts = (
+                    int(value, 16) for value in fields.groups()
+                )
+                flag_assignments = re.findall(
+                    r"zz_configurationBits\[([0-9]+)\] = 1'b([01]);", rtl
+                )
+                assert len(flag_assignments) == 7
+                flags = sum(int(value) << int(index) for index, value in flag_assignments)
+                word = (
+                    conflicts
+                    | (vertex_bits << 8)
+                    | (weight_bits << 16)
+                    | (instruction_depth << 24)
+                    | (flags << 32)
+                    | (layer_count << 48)
+                )
+                print(f"{word:016x}")
+                PY
+                )"
+                printf '%s\n' "$MICROBLOSSOM_R5_ACTUAL_HARDWARE_INFO_WORD_1" \
+                  > actual-hardware-info-word-1.txt
+                cargo test --profile release --locked --lib --no-run
+              '';
+              doCheck = true;
+              checkPhaseCargoCommand = ''
+                cargo test --profile release --locked --lib -- --nocapture 2>&1 \
+                  | tee materializer-test.log
+                grep -F \
+                  'MICROBLOSSOM_R5_MATERIALIZER_PASS graph=${definition.spec.id}-v1 cases=${toString expectedCases}' \
+                  materializer-test.log >/dev/null
+                grep -F \
+                  "MICROBLOSSOM_R5_HARDWARE_IDENTITY_PASS graph=${definition.spec.id}-v1 word_1=0x$MICROBLOSSOM_R5_ACTUAL_HARDWARE_INFO_WORD_1 layers=" \
+                  materializer-test.log >/dev/null
+              '';
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = ''
+                mkdir -p "$out"
+                cp actual-hardware-info-word-1.txt materializer-test.log "$out/"
+                cp ${graphModule} "$out/microblossom_graph.rs"
+              '';
+              meta = {
+                description = "Native fixed-capacity correction materializer test for ${definition.spec.id}";
+                license = lib.licenses.mit;
+                platforms = systems;
+              };
+            };
+          r5RustMaterializerTests = lib.mapAttrs mkR5RustMaterializerTest (
+            lib.filterAttrs (_name: definition: definition.rustService) r5ServiceDefinitions
+          );
+          mkR5RustServiceModelLibrary =
+            name: definition:
+            let
+              graphContract = graphServiceContracts.${name};
+              graphContractRoot =
+                "${graphContract}/share/microblossom/r5-service/${definition.spec.id}-v1";
+              graphModule = "${graphContractRoot}/microblossom_graph.rs";
+            in
+            craneLib.mkCargoDerivation {
+              pname = "${definition.outputPrefix}-r5-rust-service-model-library";
+              version = "0.1.0";
+              src = r5RustSource;
+              cargoLock = ./src/cpu/r5-service-rust/Cargo.lock;
+              cargoArtifacts = null;
+              strictDeps = true;
+              postUnpack = ''
+                sourceRoot="$sourceRoot/src/cpu/r5-service-rust"
+              '';
+              MICROBLOSSOM_R5_GRAPH_MODULE = graphModule;
+              MICROBLOSSOM_SKIP_CBINDGEN = "1";
+              RUSTFLAGS = "--remap-path-prefix=${r5RustSource}=.";
+              buildPhaseCargoCommand =
+                "cargo build --profile release --locked --lib --features service-model";
+              doCheck = false;
+              doInstallCargoArtifacts = false;
+              installPhaseCommand = ''
+                mkdir -p "$out/lib"
+                cp target/release/libmicroblossom_r5_service.a "$out/lib/"
+              '';
+              meta = {
+                description = "Native production service plus software accelerator model for ${definition.spec.id}";
+                license = lib.licenses.mit;
+                platforms = systems;
+              };
+            };
+          r5RustServiceModelLibraries = lib.mapAttrs mkR5RustServiceModelLibrary (
+            lib.filterAttrs (_name: definition: definition.rustService) r5ServiceDefinitions
+          );
+          mkGraphServiceContract =
+            definition:
+            let
+              fixture = graphMatrix.${definition.spec.id}.fixture;
+              fixtureRoot = "${fixture}/share/microblossom/fixtures/${definition.spec.id}-v1";
+              capacityArguments = lib.optionals definition.legacyCompatible [
+                "--max-defects ${toString definition.effectiveMaxDefects}"
+                "--max-correction-edges ${toString definition.effectiveMaxCorrectionEdges}"
+              ];
+            in
+            pkgs.runCommand "${definition.outputPrefix}-r5-service-contract"
+              {
+                nativeBuildInputs = [
+                  pkgs.jq
+                  pkgs.python3
+                ];
+                passthru = {
+                  inherit (definition)
+                    requestPayloadBytes
+                    responsePayloadBytes
+                    requestPacketBytes
+                    responsePacketBytes
+                    requestBeats
+                    responseBeats
+                    ;
+                  graphSha256 = definition.spec.graphSha256;
+                  graphId = definition.spec.id;
+                  maxPacketBeats = lib.max definition.requestBeats definition.responseBeats;
+                };
+              }
+              ''
+                root="$out/share/microblossom/r5-service/${definition.spec.id}-v1"
+                python3 ${./src/qshell/tools/build_graph_service_contract.py} \
+                  --graph ${fixtureRoot}/graph.json \
+                  --manifest ${fixtureRoot}/manifest.json \
+                  --output "$root" \
+                  ${lib.concatStringsSep " \\\n                  " capacityArguments}
+                contract="$root/graph-service-contract.json"
+                header="$root/microblossom_graph_contract.h"
+                rust_module="$root/microblossom_graph.rs"
+                test -s "$contract"
+                test -s "$header"
+                test -s "$rust_module"
+                test "$(jq -er '.graph.sha256' "$contract")" = ${definition.spec.graphSha256}
+                test "$(jq -er '.graph.vertexCount' "$contract")" = ${toString definition.spec.vertexNum}
+                test "$(jq -er '.graph.edgeCount' "$contract")" = ${toString definition.spec.edgeNum}
+                test "$(jq -er '.graph.virtualVertexCount' "$contract")" = ${toString definition.spec.virtualVertexNum}
+                test "$(jq -er '.protocol.request.packetBytes' "$contract")" = ${toString definition.requestPacketBytes}
+                test "$(jq -er '.protocol.response.packetBytes' "$contract")" = ${toString definition.responsePacketBytes}
+                test "$(jq -er '.protocol.request.beats' "$contract")" = ${toString definition.requestBeats}
+                test "$(jq -er '.protocol.response.beats' "$contract")" = ${toString definition.responseBeats}
+                python3 - ${fixtureRoot}/graph.json "$contract" "$header" "$rust_module" <<'PY'
+                import json
+                import re
+                import sys
+
+                graph = json.load(open(sys.argv[1], encoding="utf-8"))
+                contract = json.load(open(sys.argv[2], encoding="utf-8"))
+                header = open(sys.argv[3], encoding="utf-8").read()
+                rust_module = open(sys.argv[4], encoding="utf-8").read()
+                bitmap = bytearray((graph["vertex_num"] + 7) // 8)
+                for vertex in graph["virtual_vertices"]:
+                    bitmap[vertex // 8] |= 1 << (vertex % 8)
+                assert contract["graph"]["virtualVertices"] == graph["virtual_vertices"]
+                assert contract["graph"]["virtualVertexBitmapHex"] == bitmap.hex()
+                layer_fusion = graph.get("layer_fusion")
+                num_layers = 0 if layer_fusion is None else layer_fusion["num_layers"]
+                assert contract["graph"]["numLayers"] == num_layers
+                assert f"#define MICROBLOSSOM_GRAPH_NUM_LAYERS UINT8_C({num_layers})" in header
+                assert f"pub const NUM_LAYERS: u8 = {num_layers};" in rust_module
+                initializer = re.search(
+                    r"microblossom_virtual_vertex_bitmap\[[0-9]+\] = \{([^}]*)\}",
+                    header,
+                )
+                assert initializer is not None
+                header_bitmap = bytes(
+                    int(value, 16)
+                    for value in re.findall(r"UINT8_C\(0x([0-9a-f]{2})\)", initializer.group(1))
+                )
+                assert header_bitmap == bitmap
+                vertex_bits = max(5, (2 * graph["vertex_num"] - 1).bit_length())
+                assert contract["graph"]["vertexBits"] == vertex_bits
+                assert contract["graph"]["nodeCapacity"] == 1 << vertex_bits
+                assert contract["graph"]["defectNodeCapacity"] == 1 << (vertex_bits - 1)
+                assert contract["graph"]["materializer"]["arcCount"] == 2 * len(graph["weighted_edges"])
+                assert f'pub const GRAPH_SHA256: &str = "{contract["graph"]["sha256"]}";' in rust_module
+                assert f"pub const VERTEX_BITS: usize = {vertex_bits};" in rust_module
+                assert "pub static WEIGHTED_EDGES" in rust_module
+                assert "pub static CSR_ROW_OFFSETS" in rust_module
+                assert "pub static CSR_EDGE_INDICES" in rust_module
+                PY
+              '';
+          graphServiceContracts = lib.mapAttrs (
+            _name: definition: mkGraphServiceContract definition
+          ) r5ServiceDefinitions;
+
           r5PlatformContract = {
             api = "coyote.v80-r5-platform/v1";
             xilinxVersion = doctor.boards.v80.xilinxVersion;
@@ -1009,7 +1560,7 @@
               "r5_internal_trap"
             ];
             absoluteSymbols = {
-              __stack_floor = "0x0002f000";
+              __stack_floor = "0x0002c800";
               __svc_stack_top = "0x0002f800";
               __abt_stack_top = "0x0002fa00";
               __und_stack_top = "0x0002fc00";
@@ -1019,10 +1570,13 @@
           };
           r5ServiceIdentityFiles = [
             ./src/cpu/r5-service/Makefile
+            ./src/cpu/r5-service/check_r5_binary.py
             ./src/cpu/r5-service/linker.ld
             ./src/cpu/r5-service/service.c
+            ./src/cpu/r5-service/service.h
             ./src/cpu/r5-service/qshell_abi_generated.h
             ./src/cpu/r5-service/startup.S
+            ./src/qshell/tools/build_graph_service_contract.py
             "${coyote}/sw/firmware/coprocessor/provider.c"
             "${coyote}/sw/firmware/coprocessor/provider.h"
             "${coyote}/sw/firmware/coprocessor/provider_internal.h"
@@ -1030,42 +1584,184 @@
             "${coyote}/sw/firmware/coprocessor/provider_protocol.h"
             "${coyote}/sw/firmware/coprocessor/provider_transport_r5.c"
           ];
-          r5ServiceRuntimeIdentity = builtins.hashString "sha256" (
-            lib.concatStringsSep "\n" (
-              [
-                "microblossom-d3-r5-service-runtime-v1"
-                "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5"
-                (builtins.toJSON r5PlatformContract)
-              ]
-              ++ map (path: builtins.hashFile "sha256" path) r5ServiceIdentityFiles
-            )
-          );
-          r5ServiceIdentityFlags = lib.concatStringsSep " " (
-            lib.genList (
-              index:
-              "-DCYT_PROVIDER_IDENTITY_WORD_${toString index}=0x${
-                builtins.substring (index * 8) 8 r5ServiceRuntimeIdentity
-              }"
-            ) 8
-          );
-          r5ServiceSource = pkgs.runCommand "microblossom-d3-r5-service-source" { } ''
-            mkdir -p "$out/coyote/sw/firmware"
-            cp -r ${./src/cpu/r5-service}/. "$out/"
-            cp -r ${coyote}/sw/firmware/coprocessor "$out/coyote/sw/firmware/"
-          '';
-          r5ServiceFirmware = coyoteNix.lib.mkCoyoteR5FirmwarePackage {
-            inherit pkgs;
-            tools = coyoteTools;
-            pname = "microblossom-d3-r5-service-firmware";
-            src = r5ServiceSource;
-            platformContract = r5PlatformContract;
-            firmwareAbi = "microblossom-d3-coprocessor-v1";
-            runtimeIdentity = r5ServiceRuntimeIdentity;
-            extraMakeFlags = [
-              "COYOTE_ROOT=./coyote"
-              "EXTRA_CFLAGS=${r5ServiceIdentityFlags}"
-            ];
-          };
+          mkR5FirmwareEntry =
+            name: definition:
+            let
+              graphContract = graphServiceContracts.${name};
+              contractRoot = "${graphContract}/share/microblossom/r5-service/${definition.spec.id}-v1";
+              rustService = if definition.rustService then r5RustServices.${name} else null;
+              runtimeIdentity = builtins.hashString "sha256" (
+                lib.concatStringsSep "\n" (
+                  [
+                    "microblossom-graph-r5-service-runtime-v1"
+                    definition.spec.graphSha256
+                    (builtins.toJSON {
+                      inherit (definition)
+                        effectiveMaxDefects
+                        effectiveMaxCorrectionEdges
+                        requestPacketBytes
+                        responsePacketBytes
+                        requestBeats
+                        responseBeats
+                        ;
+                    })
+                    (builtins.toJSON r5PlatformContract)
+                  ]
+                  ++ lib.optionals (rustService != null) [
+                    "microblossom-r5-rust-service-staticlib"
+                    rustService.microblossomR5RustService.archiveBuildIdentity
+                    (if definition.rustArchiveSha256 == null then
+                      "archive-sha256-pending"
+                    else
+                      definition.rustArchiveSha256)
+                  ]
+                  ++ map (path: builtins.hashFile "sha256" path) r5ServiceIdentityFiles
+                )
+              );
+              identityFlags = lib.concatStringsSep " " (
+                lib.genList (
+                  index:
+                  "-DCYT_PROVIDER_IDENTITY_WORD_${toString index}=0x${
+                    builtins.substring (index * 8) 8 runtimeIdentity
+                  }"
+                ) 8
+              );
+              source = pkgs.runCommand "${definition.outputPrefix}-r5-service-source" { } ''
+                mkdir -p "$out/coyote/sw/firmware" "$out/metadata"
+                cp -r ${./src/cpu/r5-service}/. "$out/"
+                cp ${contractRoot}/microblossom_graph_contract.h "$out/"
+                cp ${contractRoot}/microblossom_graph.rs "$out/metadata/"
+                cp ${contractRoot}/graph-service-contract.json "$out/metadata/"
+                cp -r ${coyote}/sw/firmware/coprocessor "$out/coyote/sw/firmware/"
+                ${lib.optionalString (rustService != null) ''
+                  mkdir -p "$out/rust-service"
+                  cp ${rustService}/lib/libmicroblossom_r5_service.a \
+                    "$out/rust-service/"
+                  cp ${rustService}/include/microblossom_rust_service.h "$out/"
+                  cp ${rustService}/metadata/rust-service.json \
+                    "$out/metadata/rust-service.json"
+                ''}
+              '';
+              firmwareAbi = "microblossom-${definition.spec.id}-coprocessor-v1";
+              firmwareBase = coyoteNix.lib.mkCoyoteR5FirmwarePackage {
+                inherit pkgs;
+                tools = coyoteTools;
+                pname = "${definition.outputPrefix}-r5-service-firmware";
+                src = source;
+                platformContract = r5PlatformContract;
+                inherit firmwareAbi runtimeIdentity;
+                extraMakeFlags = [
+                  "COYOTE_ROOT=./coyote"
+                  "EXTRA_CFLAGS=${identityFlags}${lib.optionalString (rustService != null) " -DMICROBLOSSOM_PRODUCTION_FIRMWARE=1"}"
+                ]
+                ++ lib.optionals (rustService != null) [
+                  "RUST_SERVICE_ARCHIVE=rust-service/libmicroblossom_r5_service.a"
+                ];
+                extraAttrs = lib.optionalAttrs (rustService != null) {
+                  postCheck = ''
+                    python3 check_r5_binary.py \
+                      --kind elf --input build/r5.elf \
+                      --require-function microblossom_rust_service_decode \
+                      --require-object microblossom_rust_service_contract \
+                      --output r5-binary-policy.json
+                    grep -F 'rust-service/libmicroblossom_r5_service.a' build/r5.map >/dev/null
+                    armr5-none-eabi-nm -a build/r5.elf > final-symbols.txt
+                    if grep -E \
+                      'microblossom_rust_software_accelerator_|fusion_blossom|dual_module_comb' \
+                      final-symbols.txt; then
+                      echo 'target ELF contains a test-only service-model symbol' >&2
+                      exit 1
+                    fi
+                  '';
+                  postInstall = ''
+                    cp r5-binary-policy.json "$out/metadata/binary-policy.json"
+                    cp final-symbols.txt "$out/analysis/final-symbols.txt"
+                    mkdir -p "$out/analysis/c-stack-usage"
+                    cp build/*.su "$out/analysis/c-stack-usage/"
+                    cp metadata/rust-service.json "$out/metadata/rust-service.json"
+                    archive_sha256="$(sha256sum \
+                      rust-service/libmicroblossom_r5_service.a | cut -d' ' -f1)"
+                    recorded_archive_sha256="$(jq -er '.archiveSha256' \
+                      metadata/rust-service.json)"
+                    test "$archive_sha256" = "$recorded_archive_sha256"
+                    jq --arg archiveSha256 "$archive_sha256" \
+                      --arg archiveBuildIdentity \
+                        '${rustService.microblossomR5RustService.archiveBuildIdentity}' \
+                      --arg target '${r5RustTarget}' \
+                      '. + {rustService: {
+                        api: "microblossom.r5-rust-service/v1",
+                        target: $target,
+                        archiveSha256: $archiveSha256,
+                        archiveBuildIdentity: $archiveBuildIdentity,
+                        decodeEnabled: true
+                      }}' \
+                      "$out/metadata/firmware.json" > "$out/metadata/firmware.json.tmp"
+                    mv "$out/metadata/firmware.json.tmp" "$out/metadata/firmware.json"
+                    (cd "$out" && find firmware analysis metadata -type f \
+                      ! -name artifacts.sha256 -print0 | sort -z | xargs -0 sha256sum) \
+                      > "$out/metadata/artifacts.sha256"
+                  '';
+                };
+              };
+              firmware = firmwareBase.overrideAttrs (old: {
+                passthru = (old.passthru or { }) // {
+                  microblossomGraphService = {
+                    inherit graphContract runtimeIdentity firmwareAbi rustService;
+                    graphSha256 = definition.spec.graphSha256;
+                    graphId = definition.spec.id;
+                    inherit (definition)
+                      requestPacketBytes
+                      responsePacketBytes
+                      requestBeats
+                      responseBeats
+                      ;
+                  };
+                };
+              });
+              runnerPackage =
+                if definition.legacyCompatible then
+                  microblossomQshellProtocol
+                else
+                  pkgs.writeShellApplication {
+                    name = definition.runnerBinary;
+                    runtimeInputs = [ pkgs.jq ];
+                    text = ''
+                      contract=${contractRoot}/graph-service-contract.json
+                      exec ${microblossomQshellProtocol}/bin/microblossom_coprocessor \
+                        --graph-id "$(jq -er '.graph.sha256' "$contract")" \
+                        --vertices "$(jq -er '.graph.vertexCount' "$contract")" \
+                        --edges "$(jq -er '.graph.edgeCount' "$contract")" \
+                        --virtual-vertices \
+                          "$(jq -er '.graph.virtualVertices | map(tostring) | join(",")' "$contract")" \
+                        "$@"
+                    '';
+                    meta = {
+                      description = "Frozen ${definition.spec.id} MicroBlossom co-processor runner";
+                      license = lib.licenses.mit;
+                      platforms = systems;
+                      mainProgram = definition.runnerBinary;
+                    };
+                  };
+            in
+            definition
+            // {
+              inherit
+                graphContract
+                contractRoot
+                runtimeIdentity
+                identityFlags
+                source
+                firmwareAbi
+                firmware
+                rustService
+                runnerPackage
+                ;
+            };
+          r5FirmwareEntries = lib.mapAttrs mkR5FirmwareEntry r5ServiceDefinitions;
+          legacyR5FirmwareEntry = r5FirmwareEntries."legacy-d3";
+          r5ServiceRuntimeIdentity = legacyR5FirmwareEntry.runtimeIdentity;
+          r5ServiceSource = legacyR5FirmwareEntry.source;
+          r5ServiceFirmware = legacyR5FirmwareEntry.firmware;
 
           coprocessorContractTemplate = ./src/qshell/contracts/microblossom-d3-coprocessor.template.json;
 
@@ -1086,6 +1782,9 @@
                   "$out/src/microblossom/hdl/microblossom_coprocessor_mmio.sv"
                 cp ${./src/qshell/rtl/microblossom_coprocessor_application.sv} \
                   "$out/src/microblossom/hdl/microblossom_coprocessor_application.sv"
+                mkdir -p "$out/metadata"
+                cp ${legacyR5FirmwareEntry.contractRoot}/graph-service-contract.json \
+                  "$out/metadata/graph-service-contract.json"
                 substituteInPlace "$out/CMakeLists.txt" \
                   --replace-fail \
                     'load_apps(VFPGA_C0_0 "src/microblossom")' \
@@ -1102,8 +1801,13 @@
                       logicalPort: 0,
                       streamAbi: 1,
                       mmioAbi: 1,
-                      applicationMmioAbi: "microblossom-d3-accelerator-v1",
-                      integrationState: "connected"
+                      applicationMmioAbi: "microblossom-code-capacity-repetition-d3-accelerator-v1",
+                      integrationState: "connected",
+                      graphServiceContract: "metadata/graph-service-contract.json",
+                      requestPacketBytes: 96,
+                      responsePacketBytes: 96,
+                      requestBeats: 2,
+                      responseBeats: 2
                     }
                   }' \
                   "$out/core-manifest.json" > "$out/core-manifest.json.tmp"
@@ -1151,15 +1855,16 @@
                 mkdir -p "$out/metadata" "$out/packages"
                 python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
                   --template ${coprocessorContractTemplate} \
+                  --graph-contract ${legacyR5FirmwareEntry.contractRoot}/graph-service-contract.json \
                   --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
                   --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
                   --application-metadata ${d3QshellCoprocessorApp}/metadata/app.json \
-                  --runtime-identity ${r5ServiceFirmware}/metadata/runtime-identity \
+                  --firmware-metadata ${r5ServiceFirmware}/metadata/firmware.json \
                   --output "$out" \
                   --qshell-revision ${v80R5QshellRevision} \
                   --coyote-revision ${v80R5CoyoteRevision} \
                   --coyote-nix-revision ${v80R5CoyoteNixRevision} \
-                  --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
+                  --implementation-revision ${self.rev or "c17e888982b8641986266be35e8fc0d9c91dcd64"}
                 ln -s ${d3QshellCoprocessorApp} "$out/packages/application"
                 ln -s ${qshellV80CoprocessorShell} "$out/packages/shell"
                 ln -s ${r5ServiceFirmware} "$out/packages/firmware"
@@ -1217,6 +1922,182 @@
                   \( -type f -o -type l \) ! -name artifacts.sha256 \
                   | sort | xargs sha256sum) > "$out/metadata/artifacts.sha256"
               '';
+
+          mkCircuitR5ApplicationEntry =
+            name:
+            let
+              service = r5FirmwareEntries.${name};
+              inherit (service) spec outputPrefix runnerBinary;
+              baseHwSource = graphMatrix.${spec.id}.hwSource;
+              hwSource = pkgs.runCommand "${outputPrefix}-qshell-coprocessor-app-hw-source" { } ''
+                cp -R ${baseHwSource}/. "$out"
+                chmod -R u+w "$out"
+                mkdir -p "$out/src/microblossom-coprocessor" "$out/metadata"
+                cp ${./src/qshell/app/src/microblossom-coprocessor/vfpga_top.svh} \
+                  "$out/src/microblossom-coprocessor/vfpga_top.svh"
+                cp ${./src/qshell/rtl/microblossom_coprocessor_mmio.sv} \
+                  "$out/src/microblossom/hdl/microblossom_coprocessor_mmio.sv"
+                cp ${./src/qshell/rtl/microblossom_coprocessor_application.sv} \
+                  "$out/src/microblossom/hdl/microblossom_coprocessor_application.sv"
+                cp ${service.contractRoot}/graph-service-contract.json \
+                  "$out/metadata/graph-service-contract.json"
+                substituteInPlace "$out/CMakeLists.txt" \
+                  --replace-fail \
+                    'load_apps(VFPGA_C0_0 "src/microblossom")' \
+                    'load_apps(VFPGA_C0_0 "src/microblossom-coprocessor src/microblossom")'
+                sed -i \
+                  '/load_apps(/i set(FPLAN_PATH "${microblossomV80Floorplan}")' \
+                  "$out/CMakeLists.txt"
+                ${pkgs.jq}/bin/jq \
+                  --arg applicationMmioAbi "microblossom-${spec.id}-accelerator-v1" \
+                  --arg graphServiceContract "metadata/graph-service-contract.json" \
+                  --argjson requestPacketBytes ${toString service.requestPacketBytes} \
+                  --argjson responsePacketBytes ${toString service.responsePacketBytes} \
+                  --argjson requestBeats ${toString service.requestBeats} \
+                  --argjson responseBeats ${toString service.responseBeats} \
+                  '. + {
+                    coprocessor: {
+                      logicalPort: 0,
+                      streamAbi: 1,
+                      mmioAbi: 1,
+                      applicationMmioAbi: $applicationMmioAbi,
+                      integrationState: "connected",
+                      graphServiceContract: $graphServiceContract,
+                      requestPacketBytes: $requestPacketBytes,
+                      responsePacketBytes: $responsePacketBytes,
+                      requestBeats: $requestBeats,
+                      responseBeats: $responseBeats
+                    }
+                  }' \
+                  "$out/core-manifest.json" > "$out/core-manifest.json.tmp"
+                mv "$out/core-manifest.json.tmp" "$out/core-manifest.json"
+              '';
+              application = coyoteNix.lib.mkCoyoteAppPackage {
+                inherit pkgs xilinxShareRoot;
+                tools = coyoteTools;
+                coyoteRoot = coyote;
+                xilinxShell = doctor.xilinxShell;
+                inherit hwSource;
+                pname = "${outputPrefix}-qshell-v80-coprocessor-app";
+                board = "v80";
+                shellPackage = qshellV80CoprocessorShell;
+                cmakeFlags = [
+                  "-DCYT_DIR:PATH=${coyote}"
+                  "-DSCLK_F:STRING=333"
+                  "-DN_COPROCESSOR_PORTS:STRING=1"
+                  "-DEN_V80_R5_PLATFORM:STRING=0"
+                  "-DPCIE_GEN:STRING=5"
+                ];
+                implementation.resources.cores = 1;
+                provenance = {
+                  application = "microblossom-${spec.id}-coprocessor-integration";
+                  graphSha256 = spec.graphSha256;
+                  qshellRecordAbi = qshellAbiSpec.version;
+                  mbqProtocol = 1;
+                  coprocessorLogicalPort = 0;
+                  coprocessorStreamAbi = 1;
+                  coprocessorMmioAbi = 1;
+                  provider = "v80-r5-0";
+                  integrationState = "logical-port-connected";
+                  requestBeats = service.requestBeats;
+                  responseBeats = service.responseBeats;
+                };
+              };
+              compatibilityBundle =
+                pkgs.runCommand "${outputPrefix}-v80-coprocessor-compatibility-bundle"
+                  {
+                    nativeBuildInputs = [ pkgs.python3Packages.jsonschema ];
+                  }
+                  ''
+                    mkdir -p "$out/metadata" "$out/packages"
+                    python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                      --template ${coprocessorContractTemplate} \
+                      --graph-contract ${service.contractRoot}/graph-service-contract.json \
+                      --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                      --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
+                      --application-metadata ${application}/metadata/app.json \
+                      --firmware-metadata ${service.firmware}/metadata/firmware.json \
+                      --output "$out" \
+                      --qshell-revision ${v80R5QshellRevision} \
+                      --coyote-revision ${v80R5CoyoteRevision} \
+                      --coyote-nix-revision ${v80R5CoyoteNixRevision} \
+                      --implementation-revision ${self.rev or "c17e888982b8641986266be35e8fc0d9c91dcd64"}
+                    ln -s ${application} "$out/packages/application"
+                    ln -s ${qshellV80CoprocessorShell} "$out/packages/shell"
+                    ln -s ${service.firmware} "$out/packages/firmware"
+                    ln -s ${service.graphContract} "$out/packages/graph-contract"
+                    ln -s ${microblossomQshellProtocol} "$out/packages/host-protocol"
+                    ln -s ${microblossomQshellCoyoteBridge} "$out/packages/coyote-bridge"
+                    cp ${application}/metadata/app.json "$out/metadata/"
+                    cp ${service.firmware}/metadata/firmware.json "$out/metadata/"
+                    cp ${service.contractRoot}/graph-service-contract.json "$out/metadata/"
+                    (cd "$out" && sha256sum decoder-contract.json manifest.json \
+                      metadata/app.json metadata/firmware.json \
+                      metadata/graph-service-contract.json) \
+                      > "$out/metadata/artifacts.sha256"
+                  '';
+              v80R5App =
+                pkgs.runCommand "${outputPrefix}-v80-r5-app"
+                  {
+                    nativeBuildInputs = [ pkgs.jq ];
+                    passthru = {
+                      coyoteTwoStage = application.coyoteTwoStage;
+                      qshellPackage = qshellV80CoprocessorShell;
+                      applicationPackage = application;
+                      firmwarePackage = service.firmware;
+                      graphContractPackage = service.graphContract;
+                    };
+                  }
+                  ''
+                    mkdir -p "$out/bitstreams" "$out/firmware" "$out/bin" \
+                      "$out/metadata" "$out/packages"
+                    ln -s ${application}/bitstreams/config_0/vfpga_c0_0.pdi \
+                      "$out/bitstreams/${spec.id}-v80-r5.pdi"
+                    ln -s ${service.firmware}/firmware/r5.elf "$out/firmware/r5.elf"
+                    ln -s ${service.runnerPackage}/bin/${runnerBinary} \
+                      "$out/bin/${runnerBinary}"
+                    ln -s ${microblossomQshellProtocol}/bin/microblossom_coprocessor \
+                      "$out/bin/microblossom_coprocessor"
+                    ln -s ${microblossomQshellCoyoteBridge}/bin/microblossom-qshell-coyote-bridge \
+                      "$out/bin/microblossom-qshell-coyote-bridge"
+                    ln -s ${qshellHostPackage}/bin/qshell "$out/bin/qshell"
+                    ln -s ${application} "$out/packages/vfpga"
+                    ln -s ${service.firmware} "$out/packages/firmware"
+                    ln -s ${service.graphContract} "$out/packages/graph-contract"
+                    cp ${compatibilityBundle}/decoder-contract.json "$out/metadata/"
+                    cp ${compatibilityBundle}/manifest.json "$out/metadata/"
+                    cp ${application}/metadata/app.json "$out/metadata/"
+                    cp ${application}/metadata/shell.json "$out/metadata/"
+                    cp ${service.firmware}/metadata/firmware.json "$out/metadata/"
+                    cp ${service.contractRoot}/graph-service-contract.json "$out/metadata/"
+                    cat > "$out/README.txt" <<EOF
+                    MicroBlossom ${spec.id} V80 R5 application for QShell
+
+                    This graph-specific package contains ${toString service.requestBeats}-beat
+                    requests, ${toString service.responseBeats}-beat responses, the independently
+                    packaged R5 firmware and vFPGA application, and their immutable contracts.
+                    Deploy the matching qshell-v80-r5-shell separately, load
+                    bitstreams/${spec.id}-v80-r5.pdi, start firmware/r5.elf, bind the exact
+                    provider generation, and run bin/${runnerBinary} through the packaged bridge.
+                    EOF
+                    (cd "$out" && find bitstreams firmware bin metadata \
+                      \( -type f -o -type l \) ! -name artifacts.sha256 \
+                      | sort | xargs sha256sum) > "$out/metadata/artifacts.sha256"
+                  '';
+            in
+            service
+            // {
+              inherit
+                hwSource
+                application
+                compatibilityBundle
+                v80R5App
+                ;
+            };
+          circuitR5Applications = lib.genAttrs [
+            "circuit-level-d3"
+            "circuit-level-d9"
+          ] mkCircuitR5ApplicationEntry;
 
           microblossomQshellCoyoteBridge = pkgs.stdenv.mkDerivation {
             pname = "microblossom-qshell-coyote-bridge";
@@ -1350,6 +2231,32 @@
             v80 = mkD3QshellXdbRunner "v80";
           };
 
+          circuitR5Packages = lib.foldl' (
+            packages: service:
+            let
+              prefix = service.outputPrefix;
+            in
+            packages
+            // {
+              "${prefix}-r5-service-contract" = service.graphContract;
+              "${prefix}-r5-service-source" = service.source;
+              "${prefix}-r5-rust-service" = service.rustService;
+              "${prefix}-r5-rust-materializer-test" =
+                r5RustMaterializerTests.${service.key};
+              "${prefix}-r5-rust-service-model-library" =
+                r5RustServiceModelLibraries.${service.key};
+              "${prefix}-r5-service-firmware" = service.firmware;
+              "${prefix}-coprocessor-run" = service.runnerPackage;
+              "${prefix}-qshell-coprocessor-app-hw-source" = service.hwSource;
+              "${prefix}-qshell-v80-coprocessor-app" = service.application;
+              "${prefix}-v80-coprocessor-compatibility-bundle" = service.compatibilityBundle;
+              "${prefix}-v80-r5-app" = service.v80R5App;
+              "${prefix}-v80-r5-app-synth" = service.application.coyoteTwoStage.stages.synth;
+              "${prefix}-v80-r5-app-routed" = service.application.coyoteTwoStage.stages.routed;
+              "${prefix}-v80-r5-firmware" = service.firmware;
+            }
+          ) { } (lib.attrValues circuitR5Applications);
+
           updateQshellAbi = pkgs.writeShellApplication {
             name = "update-qshell-abi";
             runtimeInputs = [
@@ -1395,6 +2302,7 @@
           microblossom-d3-qshell-u280-app = d3QshellApps.u280;
           microblossom-d3-qshell-v80-app = d3QshellApps.v80;
           microblossom-d3-qshell-v80-coprocessor-app = d3QshellCoprocessorApp;
+          microblossom-d3-r5-service-contract = legacyR5FirmwareEntry.graphContract;
           microblossom-d3-r5-service-source = r5ServiceSource;
           microblossom-d3-r5-service-firmware = r5ServiceFirmware;
           microblossom-d3-v80-coprocessor-compatibility-bundle = d3CoprocessorCompatibilityBundle;
@@ -1410,6 +2318,7 @@
           verilator-5_014 = verilator_5_014;
         }
         // graphMatrixPackages
+        // circuitR5Packages
         // coyoteDriverPackages
       );
 
@@ -1467,6 +2376,144 @@
           graphOutputsPresent = lib.all (
             name: builtins.hasAttr name self.packages.${system}
           ) graphOutputNames;
+          r5ServiceCases = [
+            {
+              name = "legacy-d3";
+              graphId = "code-capacity-repetition-d3";
+              packagePrefix = "microblossom-d3";
+              graphSha256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5";
+              requestPayloadBytes = 48;
+              responsePayloadBytes = 48;
+              requestPacketBytes = 96;
+              responsePacketBytes = 96;
+              requestBeats = 2;
+              responseBeats = 2;
+              exactCapacity = false;
+              rustService = false;
+            }
+            {
+              name = "circuit-d3";
+              graphId = "circuit-level-d3";
+              packagePrefix = "microblossom-circuit-level-d3";
+              graphSha256 = "3e6bfdfeb3cfdb3d47bf29c5da334d84849aacfc548e0145b8db60d7f992b019";
+              requestPayloadBytes = 64;
+              responsePayloadBytes = 122;
+              requestPacketBytes = 112;
+              responsePacketBytes = 170;
+              requestBeats = 2;
+              responseBeats = 3;
+              exactCapacity = true;
+              rustService = true;
+            }
+            {
+              name = "circuit-d9";
+              graphId = "circuit-level-d9";
+              packagePrefix = "microblossom-circuit-level-d9";
+              graphSha256 = "9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a";
+              requestPayloadBytes = 760;
+              responsePayloadBytes = 3518;
+              requestPacketBytes = 808;
+              responsePacketBytes = 3566;
+              requestBeats = 13;
+              responseBeats = 56;
+              exactCapacity = true;
+              rustService = true;
+            }
+          ];
+          r5CasePackages =
+            service:
+            let
+              prefix = service.packagePrefix;
+            in
+            service
+            // {
+              contract = self.packages.${system}."${prefix}-r5-service-contract";
+              source = self.packages.${system}."${prefix}-r5-service-source";
+              firmware = self.packages.${system}."${prefix}-r5-service-firmware";
+              rustArchive =
+                if service.rustService then
+                  self.packages.${system}."${prefix}-r5-rust-service"
+                else
+                  null;
+              rustModelLibrary =
+                if service.rustService then
+                  self.packages.${system}."${prefix}-r5-rust-service-model-library"
+                else
+                  null;
+            };
+          r5Services = map r5CasePackages r5ServiceCases;
+          r5ServiceByName = name: lib.findFirst (service: service.name == name) (throw "missing R5 service case") r5Services;
+          mkR5ServiceModelCheck =
+            service:
+            let
+              contractRoot = "${service.contract}/share/microblossom/r5-service/${service.graphId}-v1";
+              rustModelLibrary = service.rustModelLibrary;
+              decoderFlags =
+                if service.rustService then
+                  "-DMICROBLOSSOM_RUST_DECODER_LINKED=1 -DMICROBLOSSOM_RUST_SOFTWARE_ACCELERATOR_LINKED=1 -DMICROBLOSSOM_SERVICE_MODEL=1 -I${service.rustArchive}/include"
+                else
+                  "-DMICROBLOSSOM_TEST_SMOKE_DECODER=1";
+              decoderLibrary =
+                if service.rustService then
+                  "${rustModelLibrary}/lib/libmicroblossom_r5_service.a -lpthread -ldl -lm"
+                else
+                  "";
+            in
+            pkgs.runCommand "microblossom-r5-service-model-${service.name}"
+              {
+                nativeBuildInputs = [ pkgs.stdenv.cc ];
+              }
+              ''
+                identity_flags=""
+                for index in $(seq 0 7); do
+                  identity_flags="$identity_flags -DCYT_PROVIDER_IDENTITY_WORD_$index=0"
+                done
+                cc -std=c11 -Wall -Wextra -Werror $identity_flags \
+                  ${decoderFlags} \
+                  -I${coyote}/sw/firmware/coprocessor \
+                  -I${service.source} \
+                  -I${contractRoot} \
+                  ${service.source}/service.c ${service.source}/service_test.c \
+                  ${decoderLibrary} -o service-test
+                ./service-test | tee service-test.log
+                grep -F \
+                  'MICROBLOSSOM_R5_SERVICE_PASS graph=${service.graphId}-v1 request_beats=${toString service.requestBeats} response_beats=${toString service.responseBeats} storage_bytes=4096' \
+                  service-test.log >/dev/null
+                grep -F \
+                  'request_storage_bytes=${toString (service.requestBeats * 64)} response_storage_bytes=4096' \
+                  service-test.log >/dev/null
+                grep -F \
+                  'static uint8_t request_packet[MICROBLOSSOM_REQUEST_BEATS * QSHELL_BEAT_BYTES]' \
+                  ${service.source}/service.c >/dev/null
+                grep -F 'static uint8_t response_packet[MICROBLOSSOM_PACKET_STORAGE_BYTES]' \
+                  ${service.source}/service.c >/dev/null
+                grep -F 'static uint16_t correction_edges[MICROBLOSSOM_MAX_CORRECTION_EDGES]' \
+                  ${service.source}/service.c >/dev/null
+                ${lib.optionalString service.rustService ''
+                  if grep -Eq \
+                    '^[[:space:]]*uint16_t[[:space:]]+microblossom_rust_service_decode[[:space:]]*\(' \
+                    ${service.source}/service_test.c; then
+                    echo 'hosted service model defines a mock Rust decoder' >&2
+                    exit 1
+                  fi
+                  ${pkgs.binutils}/bin/nm -A service-test > linked-symbols.txt
+                  grep -E '[[:space:]][Tt][[:space:]]+microblossom_rust_service_decode$' \
+                    linked-symbols.txt >/dev/null
+                  grep -E '[[:space:]][Tt][[:space:]]+microblossom_rust_software_accelerator_create$' \
+                    linked-symbols.txt >/dev/null
+                  grep -F \
+                    'MICROBLOSSOM_R5_PRODUCTION_TRACE graph=${service.graphId}-v1 case=empty operations=14 reads=8 writes=6 correction_edges=0 weight=0' \
+                    service-test.log >/dev/null
+                  grep -F \
+                    'MICROBLOSSOM_R5_PRODUCTION_TRACE graph=${service.graphId}-v1 case=singleton-smoke operations=20 reads=10 writes=10 correction_edges=1 weight=12' \
+                    service-test.log >/dev/null
+                ''}
+                mkdir -p "$out"
+                cp service-test.log "$out/"
+                ${lib.optionalString service.rustService ''
+                  cp linked-symbols.txt "$out/"
+                ''}
+              '';
         in
         {
           formatting = (treefmtEval system).config.build.check self;
@@ -1669,71 +2716,120 @@
                 ];
               }
               ''
-                contract=${./src/qshell/contracts/microblossom-d3-coprocessor.template.json}
-                runtime_identity='${
-                  self.packages.${system}.microblossom-d3-r5-service-firmware.coyoteR5Firmware.runtimeIdentity
-                }'
-                test "$runtime_identity" != \
-                  0000000000000000000000000000000000000000000000000000000000000000
-                cat > app.json <<'EOF'
-                {"application":{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-                 "shell":{"compatibilityId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
-                EOF
-                printf '%s\n' "$runtime_identity" > runtime-identity
-                python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
-                  --template "$contract" \
-                  --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
-                  --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
-                  --application-metadata app.json \
-                  --runtime-identity runtime-identity \
-                  --output generated \
-                  --qshell-revision ${v80R5QshellRevision} \
-                  --coyote-revision ${v80R5CoyoteRevision} \
-                  --coyote-nix-revision ${v80R5CoyoteNixRevision} \
-                  --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
-                test "$(jq -er '.syndrome_interface.schema_id' generated/decoder-contract.json)" = \
-                  ${toString qshellAbiSpec.schemas.microblossom_decode_request}
-                test "$(jq -er '.correction_interface.schema_id' generated/decoder-contract.json)" = \
-                  ${toString qshellAbiSpec.schemas.microblossom_decode_result}
-                test "$(jq -er '.provenance.record_abi' generated/decoder-contract.json)" = \
-                  ${toString qshellAbiSpec.version}
-                test "$(jq -er '.auxiliary.coprocessor.firmware_abi' generated/decoder-contract.json)" = \
-                  coyote-r5-provider-mmio-v1
-                test "$(jq -er '.provenance.source_revision' generated/decoder-contract.json)" = \
-                  3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2
-                test "$(jq -er '.placement.bitstream_id' generated/decoder-contract.json)" = \
-                  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-                test "$(jq -er '.provenance.shell_compatibility_id' generated/decoder-contract.json)" = \
-                  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-                test "$(jq -er '.identities.firmwareRuntime' generated/manifest.json)" = \
-                  "$runtime_identity"
-                test "$(jq -er '.dependencies.qshell' generated/manifest.json)" = \
-                  ${v80R5QshellRevision}
-                test "$(jq -er '.dependencies.coyote' generated/manifest.json)" = \
-                  ${v80R5CoyoteRevision}
-                test "$(jq -er '.dependencies.coyoteNix' generated/manifest.json)" = \
-                  ${v80R5CoyoteNixRevision}
-                cp -r generated "$out"
+                mkdir -p "$out"
+                template=${./src/qshell/contracts/microblossom-d3-coprocessor.template.json}
+                ${lib.concatMapStringsSep "\n" (
+                  service:
+                  let
+                    contractRoot = "${service.contract}/share/microblossom/r5-service/${service.graphId}-v1";
+                    runtimeIdentity = service.firmware.coyoteR5Firmware.runtimeIdentity;
+                    firmwareAbi = service.firmware.coyoteR5Firmware.firmwareAbi;
+                  in
+                  ''
+                    mkdir -p ${service.name}
+                    jq -n \
+                      --arg graphSha256 ${service.graphSha256} \
+                      '{
+                        application: {id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                        shell: {compatibilityId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                        provenance: {caller: {graphSha256: $graphSha256}}
+                      }' > ${service.name}/app.json
+                    jq -n \
+                      --arg firmwareAbi ${firmwareAbi} \
+                      --arg runtimeIdentity ${runtimeIdentity} \
+                      '{firmwareAbi: $firmwareAbi, runtimeIdentity: $runtimeIdentity}' \
+                      > ${service.name}/firmware.json
+                    python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                      --template "$template" \
+                      --graph-contract ${contractRoot}/graph-service-contract.json \
+                      --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                      --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
+                      --application-metadata ${service.name}/app.json \
+                      --firmware-metadata ${service.name}/firmware.json \
+                      --output ${service.name}/generated \
+                      --qshell-revision ${v80R5QshellRevision} \
+                      --coyote-revision ${v80R5CoyoteRevision} \
+                      --coyote-nix-revision ${v80R5CoyoteNixRevision} \
+                      --implementation-revision ${self.rev or "c17e888982b8641986266be35e8fc0d9c91dcd64"}
+                    generated=${service.name}/generated
+                    test "$(jq -er '.graphSha256' "$generated/manifest.json")" = ${service.graphSha256}
+                    test "$(jq -er '.abi.request.payloadBytes' "$generated/manifest.json")" = ${toString service.requestPayloadBytes}
+                    test "$(jq -er '.abi.response.payloadBytes' "$generated/manifest.json")" = ${toString service.responsePayloadBytes}
+                    test "$(jq -er '.abi.request.beats' "$generated/manifest.json")" = ${toString service.requestBeats}
+                    test "$(jq -er '.abi.response.beats' "$generated/manifest.json")" = ${toString service.responseBeats}
+                    test "$(jq -er '.auxiliary.coprocessor.max_packet_beats' "$generated/decoder-contract.json")" = ${toString (lib.max service.requestBeats service.responseBeats)}
+                    test "$(jq -er '.auxiliary.coprocessor.firmware_abi' "$generated/decoder-contract.json")" = ${firmwareAbi}
+                    test "$(jq -er '.identities.firmwareRuntime' "$generated/manifest.json")" = ${runtimeIdentity}
+                    test "$(jq -er '.dependencies.qshell' "$generated/manifest.json")" = ${v80R5QshellRevision}
+                    jq '.provenance.caller.graphSha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' \
+                      ${service.name}/app.json > ${service.name}/wrong-app.json
+                    if python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                      --template "$template" \
+                      --graph-contract ${contractRoot}/graph-service-contract.json \
+                      --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
+                      --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
+                      --application-metadata ${service.name}/wrong-app.json \
+                      --firmware-metadata ${service.name}/firmware.json \
+                      --output ${service.name}/wrong-generated \
+                      --qshell-revision ${v80R5QshellRevision} \
+                      --coyote-revision ${v80R5CoyoteRevision} \
+                      --coyote-nix-revision ${v80R5CoyoteNixRevision} \
+                      --implementation-revision ${self.rev or "c17e888982b8641986266be35e8fc0d9c91dcd64"}; then
+                      echo 'bundle builder accepted a graph-mismatched application' >&2
+                      exit 1
+                    fi
+                    cp -r "$generated" "$out/${service.name}"
+                  ''
+                ) r5Services}
               '';
 
-          r5-service-model =
-            pkgs.runCommand "microblossom-r5-service-model-check" { nativeBuildInputs = [ pkgs.stdenv.cc ]; }
+          r5-service-contract = (r5ServiceByName "legacy-d3").contract;
+          r5-service-contract-circuit-d3 = (r5ServiceByName "circuit-d3").contract;
+          r5-service-contract-circuit-d9 = (r5ServiceByName "circuit-d9").contract;
+          r5-service-model = mkR5ServiceModelCheck (r5ServiceByName "legacy-d3");
+          r5-service-model-circuit-d3 = mkR5ServiceModelCheck (r5ServiceByName "circuit-d3");
+          r5-service-model-circuit-d9 = mkR5ServiceModelCheck (r5ServiceByName "circuit-d9");
+          r5-rust-service-circuit-d3 = (r5ServiceByName "circuit-d3").rustArchive;
+          r5-rust-service-circuit-d9 = (r5ServiceByName "circuit-d9").rustArchive;
+          r5-rust-materializer-circuit-d3 =
+            self.packages.${system}.microblossom-circuit-level-d3-r5-rust-materializer-test;
+          r5-rust-materializer-circuit-d9 =
+            self.packages.${system}.microblossom-circuit-level-d9-r5-rust-materializer-test;
+          r5-service-firmware = (r5ServiceByName "legacy-d3").firmware;
+          r5-service-firmware-circuit-d3 = (r5ServiceByName "circuit-d3").firmware;
+          r5-service-firmware-circuit-d9 = (r5ServiceByName "circuit-d9").firmware;
+          r5-firmware-storage-contract =
+            pkgs.runCommand "microblossom-r5-firmware-storage-contract"
+              { nativeBuildInputs = [ pkgs.jq ]; }
               ''
-                identity_flags=""
-                for index in $(seq 0 7); do
-                  identity_flags="$identity_flags -DCYT_PROVIDER_IDENTITY_WORD_$index=0"
-                done
-                cc -std=c11 -Wall -Wextra -Werror $identity_flags \
-                  -I${coyote}/sw/firmware/coprocessor \
-                  -I${./src/cpu/r5-service} \
-                  ${./src/cpu/r5-service/service.c} \
-                  ${./src/cpu/r5-service/service_test.c} -o service-test
-                ./service-test | tee service-test.log
-                grep -F MICROBLOSSOM_R5_SERVICE_PASS service-test.log >/dev/null
+                ${lib.concatMapStringsSep "\n" (service: ''
+                  firmware=${service.firmware}
+                  symbols="$firmware/analysis/symbols.txt"
+                  map="$firmware/firmware/r5.map"
+                  grep -E '[[:space:]][bB][[:space:]]+request_packet$' "$symbols" >/dev/null
+                  grep -E '[[:space:]][bB][[:space:]]+response_packet$' "$symbols" >/dev/null
+                  grep -E '[[:space:]][bB][[:space:]]+correction_edges$' "$symbols" >/dev/null
+                  grep -F '__bss_end' "$map" >/dev/null
+                  grep -F 'rust-service/libmicroblossom_r5_service.a' "$map" >/dev/null
+                  test -s "$firmware/metadata/binary-policy.json"
+                  test "$(jq -er '.firmwareAbi' "$firmware/metadata/firmware.json")" = \
+                    '${service.firmware.coyoteR5Firmware.firmwareAbi}'
+                  test "$(jq -er '.runtimeIdentity' "$firmware/metadata/firmware.json")" = \
+                    '${service.firmware.coyoteR5Firmware.runtimeIdentity}'
+                  archive_sha256="$(cat ${service.rustArchive}/metadata/archive-sha256)"
+                  test "$(jq -er '.rustService.archiveSha256' \
+                    "$firmware/metadata/firmware.json")" = "$archive_sha256"
+                  test "$(jq -er '.rustService.decodeEnabled' \
+                    "$firmware/metadata/firmware.json")" = true
+                  jq -e '
+                    .hardFloatAbi == false and .unwind == false and
+                    .allocator == false and .dynamic == false and .tls == false and
+                    .initializedWritableData == false and
+                    (.unresolvedSymbols | length) == 0
+                  ' "$firmware/metadata/binary-policy.json" >/dev/null
+                '') [ (r5ServiceByName "circuit-d3") (r5ServiceByName "circuit-d9") ]}
                 touch "$out"
               '';
-
-          r5-service-firmware = self.packages.${system}.microblossom-d3-r5-service-firmware;
           d3-golden-decode = self.packages.${system}.microblossom-d3-golden-decode;
           d3-qshell-golden-decode = self.packages.${system}.microblossom-d3-qshell-golden-decode;
 
@@ -1900,8 +2996,85 @@
               grep -F 'add_files -fileset [get_filesets constrs_1] "$cfg(fplan_path)"' \
                 "$app_link" >/dev/null
               grep -F 'set_property PROCESSING_ORDER LATE' "$app_link" >/dev/null
+              test -s ${qshellCoprocessorAppHwSource}/metadata/graph-service-contract.json
+              test "$(jq -er '.coprocessor.requestBeats' \
+                ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 2
+              test "$(jq -er '.coprocessor.responseBeats' \
+                ${qshellCoprocessorAppHwSource}/core-manifest.json)" = 2
               touch "$out"
             '';
+
+          r5-graph-package-contract =
+            let
+              d3 = r5ServiceByName "circuit-d3";
+              d9 = r5ServiceByName "circuit-d9";
+              d3App = self.packages.${system}.microblossom-circuit-level-d3-qshell-v80-coprocessor-app;
+              d9App = self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-coprocessor-app;
+            in
+            assert d3.firmware.coyoteR5Firmware.runtimeIdentity != d9.firmware.coyoteR5Firmware.runtimeIdentity;
+            assert d3.firmware.coyoteR5Firmware.firmwareAbi != d9.firmware.coyoteR5Firmware.firmwareAbi;
+            assert d3App.coyoteTwoStage.kind == "app";
+            assert d9App.coyoteTwoStage.kind == "app";
+            assert d3App.coyoteTwoStage.board == "v80";
+            assert d9App.coyoteTwoStage.board == "v80";
+            assert d3App.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell;
+            assert d9App.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell;
+            pkgs.runCommand "microblossom-r5-graph-package-contract"
+              { nativeBuildInputs = [ pkgs.jq ]; }
+              ''
+                ${lib.concatMapStringsSep "\n" (
+                  service:
+                  let
+                    appSource = self.packages.${system}."${service.packagePrefix}-qshell-coprocessor-app-hw-source";
+                    runner = self.packages.${system}."${service.packagePrefix}-coprocessor-run";
+                    contractRoot = "${service.contract}/share/microblossom/r5-service/${service.graphId}-v1";
+                  in
+                  ''
+                    test -x ${runner}/bin/${
+                      if service.name == "circuit-d3" then
+                        "microblossom_circuit_d3_coprocessor"
+                      else
+                        "microblossom_circuit_d9_coprocessor"
+                    }
+                    ${runner}/bin/${
+                      if service.name == "circuit-d3" then
+                        "microblossom_circuit_d3_coprocessor"
+                      else
+                        "microblossom_circuit_d9_coprocessor"
+                    } --help | grep -F 'usage:' >/dev/null
+                    test "$(jq -er '.graphSha256' ${appSource}/core-manifest.json)" = ${service.graphSha256}
+                    test "$(jq -er '.coprocessor.requestPacketBytes' ${appSource}/core-manifest.json)" = ${toString service.requestPacketBytes}
+                    test "$(jq -er '.coprocessor.responsePacketBytes' ${appSource}/core-manifest.json)" = ${toString service.responsePacketBytes}
+                    test "$(jq -er '.coprocessor.requestBeats' ${appSource}/core-manifest.json)" = ${toString service.requestBeats}
+                    test "$(jq -er '.coprocessor.responseBeats' ${appSource}/core-manifest.json)" = ${toString service.responseBeats}
+                    cmp ${appSource}/metadata/graph-service-contract.json \
+                      ${contractRoot}/graph-service-contract.json
+                    test -s ${service.source}/microblossom_graph_contract.h
+                    test -s ${service.source}/service.h
+                    cmp ${service.source}/microblossom_graph_contract.h \
+                      ${contractRoot}/microblossom_graph_contract.h
+                    test -s ${service.rustArchive}/lib/libmicroblossom_r5_service.a
+                    cmp ${service.source}/microblossom_rust_service.h \
+                      ${service.rustArchive}/include/microblossom_rust_service.h
+                    test "$(sha256sum \
+                      ${service.rustArchive}/lib/libmicroblossom_r5_service.a | cut -d' ' -f1)" = \
+                      "$(cat ${service.rustArchive}/metadata/archive-sha256)"
+                    test "$(jq -er '.graphSha256' \
+                      ${service.rustArchive}/metadata/rust-service.json)" = \
+                      ${service.graphSha256}
+                    test "$(jq -er '.target' \
+                      ${service.rustArchive}/metadata/rust-service.json)" = \
+                      armv7r-none-eabi
+                    grep -F 'MICROBLOSSOM_RUST_DECODER_LINKED=1' \
+                      ${service.source}/Makefile >/dev/null
+                    grep -F 'RUST_SERVICE_ARCHIVE=rust-service/libmicroblossom_r5_service.a' \
+                      ${service.firmware.drvPath} >/dev/null
+                  ''
+                ) [ d3 d9 ]}
+                test '${d3.firmware.coyoteR5Firmware.runtimeIdentity}' != \
+                  '${d9.firmware.coyoteR5Firmware.runtimeIdentity}'
+                touch "$out"
+              '';
 
           qshell-application =
             pkgs.runCommand "microblossom-qshell-application"
@@ -2021,9 +3194,17 @@
             test -s "$contract/README.md"
             test -s "$contract/src/lib.rs"
             test -s "$contract/src/qshell_abi_generated.rs"
+            test -x ${protocol}/bin/microblossom_d3_coprocessor
+            test -x ${protocol}/bin/microblossom_coprocessor
+            test -s "$contract/src/bin/microblossom_d3_coprocessor.rs"
+            test -s "$contract/src/bin/microblossom_coprocessor.rs"
             cmp ${./src/qshell/protocol/src/lib.rs} "$contract/src/lib.rs"
             cmp ${./src/qshell/protocol/src/qshell_abi_generated.rs} \
               "$contract/src/qshell_abi_generated.rs"
+            cmp ${./src/qshell/protocol/src/bin/microblossom_d3_coprocessor.rs} \
+              "$contract/src/bin/microblossom_d3_coprocessor.rs"
+            cmp ${./src/qshell/protocol/src/bin/microblossom_coprocessor.rs} \
+              "$contract/src/bin/microblossom_coprocessor.rs"
             cmp ${./src/qshell/README.md} "$contract/README.md"
             touch "$out"
           '';
@@ -2166,6 +3347,10 @@
               ${./src/cpu/blossom-nostd/rust-toolchain.toml} >/dev/null
             grep -Fx 'channel = "nightly-2023-11-16"' \
               ${./src/cpu/embedded/rust-toolchain} >/dev/null
+            grep -Fx 'channel = "nightly-2023-11-16"' \
+              ${./src/cpu/r5-service-rust/rust-toolchain.toml} >/dev/null
+            grep -Fx 'targets = ["armv7r-none-eabi"]' \
+              ${./src/cpu/r5-service-rust/rust-toolchain.toml} >/dev/null
             touch "$out"
           '';
         }

@@ -1,0 +1,40 @@
+[package]
+name = "microblossom-r5-service"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Freestanding graph-bound MicroBlossom R5 service boundary"
+publish = false
+
+[lib]
+name = "microblossom_r5_service"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+
+[features]
+default = []
+service-model = ["dep:fusion-blossom", "dep:micro-blossom"]
+
+[dependencies]
+fusion-blossom = { version = "=0.2.12", optional = true }
+micro-blossom = { path = "../blossom", version = "0.0.0", optional = true }
+micro-blossom-nostd = { path = "../blossom-nostd", version = "0.0.0", default-features = false, features = [
+    "disable_print",
+    "i16_weight",
+    "obstacle_potentially_outdated",
+    "u16_index",
+] }
+
+[dev-dependencies]
+fusion-blossom = "=0.2.12"
+micro-blossom = { path = "../blossom", version = "0.0.0" }
+
+[profile.release]
+opt-level = "s"
+codegen-units = 1
+debug = false
+strip = "none"
+lto = "fat"
+panic = "abort"
+overflow-checks = true
+incremental = false

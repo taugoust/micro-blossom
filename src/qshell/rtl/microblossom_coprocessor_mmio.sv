@@ -104,8 +104,8 @@ endfunction
 
 function automatic logic [22:0] translate(input logic [11:0] address);
     case (address)
-        12'h000: translate = 23'h000000; // hardware information word 0
-        12'h008: translate = 23'h000008; // hardware information word 1
+        12'h000: translate = 23'h000008; // hardware information word 0
+        12'h008: translate = 23'h000010; // hardware information word 1
         12'h010: translate = 23'h001000; // instruction/context command
         12'h018: translate = 23'h020000; // clear accumulated growth
         12'h020: translate = 23'h020010; // maximum growth

@@ -118,6 +118,20 @@ impl<T, K, const N: usize> BinaryHeap<T, K, N> {
             data: Vec::new(),
         }
     }
+
+    /// Initializes an empty heap directly at `destination` without creating a
+    /// capacity-sized temporary.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be aligned, writable, and valid for one `Self`.
+    /// It must not point to a live value.
+    pub unsafe fn initialize_in_place(destination: *mut Self) {
+        unsafe {
+            ptr::addr_of_mut!((*destination)._kind).write(PhantomData);
+            Vec::initialize_in_place(ptr::addr_of_mut!((*destination).data));
+        }
+    }
 }
 
 impl<T, K, const N: usize> BinaryHeap<T, K, N>

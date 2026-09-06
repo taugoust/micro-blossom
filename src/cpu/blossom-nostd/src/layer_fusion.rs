@@ -1,4 +1,5 @@
 use crate::util::*;
+use core::ptr;
 
 #[cfg_attr(any(test, feature = "std"), derive(Debug))]
 pub struct LayerFusionData<const VN: usize> {
@@ -15,6 +16,34 @@ impl<const VN: usize> LayerFusionData<VN> {
             vertex_layer_id: [OptionCompactLayerId::NONE; VN],
             count_pending_breaks: 0,
             pending_breaks: [CompactNodeIndex::new(0).unwrap(); VN],
+        }
+    }
+
+    /// Initializes layer-fusion storage directly at `destination` without
+    /// creating a `VN`-sized temporary.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be aligned, writable, and valid for one `Self`.
+    /// It must not point to a live value.
+    pub unsafe fn initialize_in_place(destination: *mut Self) {
+        let vertex_layer_id = ptr::addr_of_mut!((*destination).vertex_layer_id)
+            .cast::<OptionCompactLayerId>();
+        let pending_breaks =
+            ptr::addr_of_mut!((*destination).pending_breaks).cast::<CompactNodeIndex>();
+        let empty_node = CompactNodeIndex::new(0).unwrap();
+        let mut index = 0;
+        while index < VN {
+            unsafe {
+                vertex_layer_id
+                    .add(index)
+                    .write(OptionCompactLayerId::NONE);
+                pending_breaks.add(index).write(empty_node);
+            }
+            index += 1;
+        }
+        unsafe {
+            ptr::addr_of_mut!((*destination).count_pending_breaks).write(0);
         }
     }
 

@@ -47,7 +47,7 @@ initial begin
  s_axi_bready=0;s_axi_araddr=0;s_axi_arprot=0;s_axi_arvalid=0;s_axi_rready=0;
  repeat(3)@(negedge clk);resetn=1;
  write(12'h010,64'h55,0); write(12'h020,64'h2,0); write(12'h088,0,3);
- read(12'h000,23'h000000,0); read(12'h028,23'h020020,0); read(12'h088,0,3);
+ read(12'h000,23'h000008,0); read(12'h008,23'h000010,0); read(12'h028,23'h020020,0); read(12'h088,0,3);
  $display("MICROBLOSSOM_COPROCESSOR_MMIO_PASS");$finish;
 end
 endmodule

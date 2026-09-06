@@ -9,6 +9,7 @@ use crate::interface::*;
 use crate::util::*;
 use core::iter::Chain;
 use core::ops::Range;
+use core::ptr;
 
 pub struct PrimalNodes<const N: usize> {
     /// defect nodes starting from 0, blossom nodes starting from `blossom_begin`
@@ -56,6 +57,34 @@ impl<const N: usize> PrimalNodes<N> {
             first_blossom_child: [OptionCompactNodeIndex::NONE; N],
             count_defects: 0,
             count_blossoms: 0,
+        }
+    }
+
+    /// Initializes primal-node storage directly at `destination` without
+    /// creating an `N`-sized temporary.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must be aligned, writable, and valid for one `Self`.
+    /// It must not point to a live value.
+    pub unsafe fn initialize_in_place(destination: *mut Self) {
+        let buffer = ptr::addr_of_mut!((*destination).buffer).cast::<Option<PrimalNode>>();
+        let first_blossom_child = ptr::addr_of_mut!((*destination).first_blossom_child)
+            .cast::<OptionCompactNodeIndex>();
+        let mut index = 0;
+        while index < N {
+            unsafe {
+                buffer.add(index).write(None);
+                first_blossom_child
+                    .add(index)
+                    .write(OptionCompactNodeIndex::NONE);
+            }
+            index += 1;
+        }
+        unsafe {
+            ptr::addr_of_mut!((*destination).blossom_begin).write(N / 2);
+            ptr::addr_of_mut!((*destination).count_defects).write(0);
+            ptr::addr_of_mut!((*destination).count_blossoms).write(0);
         }
     }
 

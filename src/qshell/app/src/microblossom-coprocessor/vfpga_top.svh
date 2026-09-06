@@ -1,4 +1,4 @@
-// CPU-assisted QShell MicroBlossom d3 application for Coyote region 0.
+// Graph-specific CPU-assisted QShell MicroBlossom application for Coyote region 0.
 
 import lynxTypes::*;
 
