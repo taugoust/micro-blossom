@@ -12,11 +12,8 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
-    coyote = {
-      url = "git+ssh://git@github.com/taugoust/Coyote.git?ref=debug-hub-checkpoint-abi&rev=d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
-      flake = false;
-    };
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=r5-report-source-preflight&rev=226b95d3f05420462ef3ecdd972d2b5ba699019f";
+    coyote.follows = "qshell/coyote";
     coyote-nix.follows = "qshell/coyote-nix";
     doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
   };
@@ -36,9 +33,9 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
-      v80R5QshellRevision = "fdb099f2d698535f185e90bff98e7d7987f5d969";
-      v80R5CoyoteRevision = "d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
-      v80R5CoyoteNixRevision = "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2";
+      v80R5QshellRevision = qshell.rev;
+      v80R5CoyoteRevision = coyote.rev;
+      v80R5CoyoteNixRevision = qshell.inputs.coyote-nix.rev;
       mkVerilator_5_014 =
         pkgs:
         pkgs.verilator.overrideAttrs (_old: rec {
@@ -91,7 +88,7 @@
           qshellAbiSpec = builtins.fromJSON (builtins.readFile "${qshellContractSource}/abi/qshell-abi.json");
           qshellHostPackage = qshell.packages.${system}.qshell-host;
           qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
-          qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-r5-shell;
+          qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
           xilinxShareRoot = doctor.xilinxShareRoot;
@@ -1909,7 +1906,7 @@
                 cat > "$out/README.txt" <<'EOF'
                 MicroBlossom d3 V80 R5 application for QShell
 
-                1. Build and deploy QShell output qshell-v80-r5-shell once.
+                1. Build the matching QShell output qshell-v80-r5-shell-nonstrict; qualify its timing before deployment.
                 2. Load bitstreams/microblossom-d3-v80-r5.pdi as the vFPGA application.
                 3. Start firmware/r5.elf on the shell's R5 provider.
                 4. Use bin/qshell to bind/configure the service and
@@ -1979,6 +1976,7 @@
                 xilinxShell = doctor.xilinxShell;
                 inherit hwSource;
                 pname = "${outputPrefix}-qshell-v80-coprocessor-app";
+                requiresVitisHls = false;
                 board = "v80";
                 shellPackage = qshellV80CoprocessorShell;
                 cmakeFlags = [
@@ -1987,8 +1985,12 @@
                   "-DN_COPROCESSOR_PORTS:STRING=1"
                   "-DEN_V80_R5_PLATFORM:STRING=0"
                   "-DPCIE_GEN:STRING=5"
+                  "-DEN_TIMING_CHECK:BOOL=OFF"
                 ];
-                implementation.resources.cores = 1;
+                implementation = {
+                  resources.cores = 1;
+                  enforceTiming = false;
+                };
                 provenance = {
                   application = "microblossom-${spec.id}-coprocessor-integration";
                   graphSha256 = spec.graphSha256;
@@ -2076,7 +2078,7 @@
                     This graph-specific package contains ${toString service.requestBeats}-beat
                     requests, ${toString service.responseBeats}-beat responses, the independently
                     packaged R5 firmware and vFPGA application, and their immutable contracts.
-                    Deploy the matching qshell-v80-r5-shell separately, load
+                    Qualify timing and deploy the matching qshell-v80-r5-shell-nonstrict separately, load
                     bitstreams/${spec.id}-v80-r5.pdi, start firmware/r5.elf, bind the exact
                     provider generation, and run bin/${runnerBinary} through the packaged bridge.
                     EOF
@@ -2948,7 +2950,7 @@
               qshell.packages.${system}.qshell-v80-r5-shell
               == qshell.packages.${system}.qshell-v80-coprocessor-shell;
             assert
-              qshellCoprocessorApp.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell;
+              qshellCoprocessorApp.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
             pkgs.runCommand "microblossom-qshell-coprocessor-package" { nativeBuildInputs = [ pkgs.jq ]; } ''
               test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
                 ${v80R5QshellRevision}
@@ -3017,8 +3019,8 @@
             assert d9App.coyoteTwoStage.kind == "app";
             assert d3App.coyoteTwoStage.board == "v80";
             assert d9App.coyoteTwoStage.board == "v80";
-            assert d3App.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell;
-            assert d9App.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell;
+            assert d3App.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
+            assert d9App.coyoteTwoStage.shellPackage == qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
             pkgs.runCommand "microblossom-r5-graph-package-contract"
               { nativeBuildInputs = [ pkgs.jq ]; }
               ''
