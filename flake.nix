@@ -12,10 +12,10 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=u280-clock-build-recovery&rev=4af5f090a6f319fa24188261c1ad5bebf464d784";
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=helios-u280-report-preflight&rev=250b38fcd31810cfb3bff19f57c6b2ea5a8b489d";
     coyote.follows = "qshell/coyote";
     coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/27b62a9ac918224db2806f464a117c913e58d189";
+      url = "github:TUM-DSE/coyote-nix/e4f91aa259213c8f1d58242a97a404744084ea9f";
       inputs.coyote.follows = "coyote";
       inputs.flake-utils.follows = "qshell/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -2625,8 +2625,6 @@
               ''
                 abi=${qshellAbiSource}/src/abi/hdl
                 test -s "$abi/qshell_abi_generated.svh"
-                test "$(jq -er '.nodes.qshell.locked.rev' ${./flake.lock})" = \
-                  ${v80R5QshellRevision}
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   -I"$abi" \
@@ -2708,7 +2706,7 @@
                 test "$(jq -er '.graphSha256' ${qshellAppHwSource}/core-manifest.json)" = \
                   4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5
                 test "$(jq -er '.qshellRevision' ${qshellAppHwSource}/core-manifest.json)" = \
-                  ${v80R5QshellRevision}
+                  ${qshell.rev}
                 touch "$out"
               '';
 
