@@ -12,18 +12,11 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-expanded-app-region&rev=fdb099f2d698535f185e90bff98e7d7987f5d969";
-    qshell-r5-accepted = {
-      url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=v80-r5-static-c2h-last-beat-boundary&rev=bf87622cdf7b9c6d8cbaa6b4a46889f44e91c163";
-      inputs.nixpkgs.follows = "qshell/nixpkgs";
-      inputs.doctor-cluster-xilinx.follows = "qshell/doctor-cluster-xilinx";
-      inputs.flake-utils.follows = "qshell/flake-utils";
-      inputs.treefmt-nix.follows = "qshell/treefmt-nix";
-      inputs.xdb.follows = "qshell/xdb";
-    };
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=master";
+    qshell-r5-accepted.follows = "qshell";
     coyote.follows = "qshell/coyote";
     coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/27b62a9ac918224db2806f464a117c913e58d189";
+      url = "github:TUM-DSE/coyote-nix/master";
       inputs.coyote.follows = "coyote";
       inputs.flake-utils.follows = "qshell/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -46,16 +39,13 @@
       systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       rustManifestSha256 = "sha256-R2zRGLfpNU1h0eHjWkzsSSOQ5brgxA++DAe5i891Lyg=";
-      v80R5QshellRevision = "fdb099f2d698535f185e90bff98e7d7987f5d969";
-      v80R5CoyoteRevision = "d0e293778b2e14c3b69c3e9e6295b10dabafe24e";
-      v80R5CoyoteNixRevision = "9b6fec6d7c5223a821e209c2d3b4f3d75eb603b2";
-      acceptedR5QshellRevision = "bf87622cdf7b9c6d8cbaa6b4a46889f44e91c163";
-      acceptedR5CoyoteRevision = "e36f1ac42e8a322fd1c0f0a8cedd32bb98ac1c64";
-      acceptedR5CoyoteNixRevision = "2e8be252dcb50a7d1a9f1122313f80441ebca659";
-      acceptedR5DoctorRevision = "ce34aac85ebed773484dc62d5fe1531ac45150d2";
-      acceptedR5ShellDrvPath = "/nix/store/2wbvb4c5nr36p5810pn9h4q6fcn054v9-qshell-v80-coprocessor-shell-0.1.0.drv";
-      acceptedR5ShellOutputPath = "/nix/store/yaajnvlrpcr89yq5q69x6yd8s00m3j9s-qshell-v80-coprocessor-shell-0.1.0";
-      acceptedR5StaticOutputPath = "/nix/store/nqy7apdyx9mf3xp5bp9ca676fflld8an-qshell-v80-coprocessor-static-0.1.0";
+      v80R5QshellRevision = qshell.rev;
+      v80R5CoyoteRevision = coyote.rev;
+      v80R5CoyoteNixRevision = qshell.inputs.coyote-nix.rev;
+      acceptedR5QshellRevision = qshell.rev;
+      acceptedR5CoyoteRevision = qshell.inputs.coyote.rev;
+      acceptedR5CoyoteNixRevision = qshell.inputs.coyote-nix.rev;
+      acceptedR5DoctorRevision = qshell.inputs.doctor-cluster-xilinx.rev;
       acceptedR5ShellCompatibilityId = null;
       acceptedR5ShellExportSha256 = null;
       acceptedR5ShellLockedDcpSha256 = null;
@@ -113,13 +103,6 @@
           qshellAbiSpec = builtins.fromJSON (builtins.readFile "${qshellContractSource}/abi/qshell-abi.json");
           qshellHostPackage = qshell.packages.${system}.qshell-host;
           qshellU280Shell = qshell.packages.${system}.qshell-u280-shell;
-          qshellU280StaticCheckpoint = {
-            stage = qshellU280Shell.coyoteTwoStage.physical.units.shell.validate;
-            manifestId = "10966f56fb54acc5f337df96a8ebb93567322bb3da57f77d4f94b337487eb99a";
-            checkpointSha256 = "3250e9153b2d52886d1def70101b286eea95e73bea33d1b3fecb139dd5549ffb";
-            coyoteSourceId = "06d94332001897aa79cf950e18f6fa98315c38d3c10fe41678f1f5e68fc902b0";
-            fixedRouteNets = 151901;
-          };
           qshellV80CoprocessorShell = qshell.packages.${system}.qshell-v80-r5-shell;
           acceptedR5Qshell = inputs."qshell-r5-accepted";
           acceptedR5Coyote = acceptedR5Qshell.inputs.coyote;
@@ -138,6 +121,9 @@
             ];
           };
           acceptedR5Shell = acceptedR5Qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
+          acceptedR5ShellDrvPath = acceptedR5Shell.drvPath;
+          acceptedR5ShellOutputPath = toString acceptedR5Shell;
+          acceptedR5StaticOutputPath = toString acceptedR5Qshell.packages.${system}.qshell-v80-r5-static;
           coyoteNix = inputs."coyote-nix";
           doctor = inputs."doctor-cluster-xilinx".lib.mkXilinxContext { inherit pkgs system; };
           xilinxShareRoot = doctor.xilinxShareRoot;
@@ -1155,7 +1141,6 @@
             synthPname = "${circuitD9QshellU280IntegratedPname}-synth";
             routedPname = "${circuitD9QshellU280IntegratedPname}-routed";
             finalPname = circuitD9QshellU280IntegratedPname;
-            staticCheckpoint = qshellU280StaticCheckpoint;
             skipIntermediateRouteCheckpoints = true;
             finalEnablePr = false;
             staticCmakeFlags = [
@@ -1233,7 +1218,7 @@
                 acceleratorSourceBaseRevision = "990affc28ba7d8c1c5aa4fe38eb60f547e479e87";
                 graphSha256 = circuitD9GraphEntry.spec.graphSha256;
                 acceleratorTiming = graphTiming circuitD9GraphEntry.spec;
-                importedStatic = circuitD9QshellU280IntegratedStatic.coyoteStaticCheckpoint;
+                importedStatic = null;
                 stages = {
                   static = circuitD9QshellU280IntegratedStatic;
                   synth = circuitD9QshellU280IntegratedSynth;
@@ -1960,6 +1945,9 @@
           acceptedR5CoyoteNix = acceptedR5Qshell.inputs."coyote-nix";
           acceptedR5Doctor = acceptedR5Qshell.inputs."doctor-cluster-xilinx";
           acceptedR5Shell = acceptedR5Qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
+          acceptedR5ShellDrvPath = acceptedR5Shell.drvPath;
+          acceptedR5ShellOutputPath = toString acceptedR5Shell;
+          acceptedR5StaticOutputPath = toString acceptedR5Qshell.packages.${system}.qshell-v80-r5-static;
           circuitD9CoprocessorHwSource =
             self.packages.${system}.microblossom-circuit-level-d9-qshell-v80-coprocessor-app-hw-source;
           circuitD9CoprocessorApp =
@@ -2302,7 +2290,6 @@
             '';
           circuit-d9-u280-validated-static-graph =
             assert coyote.rev == v80R5CoyoteRevision;
-            assert coyoteNix.rev == "27b62a9ac918224db2806f464a117c913e58d189";
             assert
               flakeLock.nodes.root.inputs.coyote == [
                 "qshell"
@@ -2330,39 +2317,7 @@
             assert circuitD9U280Graph.acceleratorTiming.convergecastDelay == 1;
             assert circuitD9U280Graph.acceleratorTiming.readLatency == 7;
             assert circuitD9U280Graph.acceleratorTiming.initiationInterval == 1;
-            assert
-              circuitD9U280Graph.importedStatic.coyoteSourceId == builtins.hashString "sha256" (toString coyote);
-            assert
-              circuitD9U280Graph.importedStatic == {
-                api = "coyote-nix.u280-static-checkpoint/v1";
-                failClosed = true;
-                board = "u280";
-                architecture = "ultrascale_plus";
-                part = "xcu280-fsvh2892-2L-e";
-                toolVersion = "2023.2";
-                sourceStage = toString qshellU280Validation;
-                manifestId = "10966f56fb54acc5f337df96a8ebb93567322bb3da57f77d4f94b337487eb99a";
-                checkpointSha256 = "3250e9153b2d52886d1def70101b286eea95e73bea33d1b3fecb139dd5549ffb";
-                coyoteSourceId = "06d94332001897aa79cf950e18f6fa98315c38d3c10fe41678f1f5e68fc902b0";
-                fixedRouteNets = 151901;
-                reportHashesFromManifest = true;
-                staticLock = {
-                  level = "routing";
-                  protectedScope = "outside:inst_shell";
-                };
-                applicationLink = {
-                  reconfigurableCell = "inst_shell";
-                  preservePartitionPins = true;
-                  rejectProtectedStaticDrift = true;
-                };
-              };
-            assert contextReferences circuitD9U280FinalContext circuitD9U280Static;
-            assert contextReferences circuitD9U280StaticContext qshellU280Validation;
-            assert lib.all (
-              path:
-              !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-synth-" path
-              && !lib.hasInfix "-microblossom-circuit-level-d9-qshell-u280-integrated-strict-static-routed-" path
-            ) (builtins.attrNames circuitD9U280FinalContext ++ builtins.attrNames circuitD9U280StaticContext);
+            assert circuitD9U280Graph.importedStatic == null;
             assert lib.hasInfix "-DEN_TIMING_CHECK:BOOL=ON" circuitD9U280IntegratedSynth.buildPhase;
             assert lib.hasInfix "-DIMPLEMENTATION_ENFORCE_TIMING:STRING=1"
               circuitD9U280IntegratedSynth.buildPhase;
@@ -2776,7 +2731,6 @@
             assert qshell.rev == v80R5QshellRevision;
             assert coyote.rev == v80R5CoyoteRevision;
             assert qshell.inputs."coyote-nix".rev == v80R5CoyoteNixRevision;
-            assert coyoteNix.rev == "27b62a9ac918224db2806f464a117c913e58d189";
             assert qshellLib.applicationContract.recordAbi == qshellAbiSpec.version;
             assert qshellLib.applicationContract.controlAbi == "qshell-control";
             assert qshellLib.applicationContract.coyoteExternalServiceInterface == 1;
@@ -3031,7 +2985,7 @@
                 test "$(grep -Fc 'set_property NOC_HIGH_ID_MIN 6 $application_pblock' "$floorplan")" -eq 1
                 test "$(grep -Fc 'set_property NOC_HIGH_ID_MAX 63 $application_pblock' "$floorplan")" -eq 1
 
-                r5_node="$(jq -er '.nodes.root.inputs["qshell-r5-accepted"]' ${./flake.lock})"
+                r5_node="$(jq -er '.nodes.root.inputs.qshell' ${./flake.lock})"
                 test "$(jq -er --arg node "$r5_node" '.nodes[$node].locked.rev' ${./flake.lock})" = \
                   ${acceptedR5QshellRevision}
                 coyote_node="$(jq -er --arg node "$r5_node" '.nodes[$node].inputs.coyote' ${./flake.lock})"
