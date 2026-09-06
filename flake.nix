@@ -12,11 +12,11 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=master";
+    qshell.url = "git+ssh://git@github.com/TUM-DSE/QShell.git?ref=helios-u280-report-preflight&rev=250b38fcd31810cfb3bff19f57c6b2ea5a8b489d";
     qshell-r5-accepted.follows = "qshell";
     coyote.follows = "qshell/coyote";
     coyote-nix = {
-      url = "github:TUM-DSE/coyote-nix/master";
+      url = "github:TUM-DSE/coyote-nix/e4f91aa259213c8f1d58242a97a404744084ea9f";
       inputs.coyote.follows = "coyote";
       inputs.flake-utils.follows = "qshell/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -1033,6 +1033,9 @@
                       acceleratorClockDivideBy = 2;
                       acceleratorTiming = graphTiming spec;
                     };
+                  }
+                  // lib.optionalAttrs (spec.id == "circuit-level-d3" && board == "u280") {
+                    shellPackage = qshell.packages.${system}.qshell-u280-shell-nonstrict;
                   }
                   // lib.optionalAttrs (spec.id == "circuit-level-d9" && board == "v80") {
                     cmakeFlags = [ "-DEN_TIMING_CHECK:BOOL=ON" ];

@@ -3,17 +3,17 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1788683708,
-        "narHash": "sha256-tC/I4nOPs0tRXzollNnd2qv/yfP5XZSyJREOlM+oWc0=",
+        "lastModified": 1788694123,
+        "narHash": "sha256-hD9uEFbQuNOmZNdSlnHn7MBd7VL688M9YcD6bMu6MeA=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "1739feb6830394c714101616da1687cbee11e4dd",
+        "rev": "90d3a63aaa81605437ebe20da84bc882a16b2cf6",
         "type": "github"
       },
       "original": {
         "owner": "taugoust",
-        "ref": "develop",
         "repo": "Coyote",
+        "rev": "90d3a63aaa81605437ebe20da84bc882a16b2cf6",
         "type": "github"
       }
     },
@@ -33,17 +33,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788683827,
-        "narHash": "sha256-Mj0xsfz1APhnN3PhyiaAoClhmvjQ8yjVreUgeckqdZc=",
+        "lastModified": 1788694287,
+        "narHash": "sha256-7TokvT2dBJ2k2foOenO+Elw2zY+lbjbxJb7tNDSGbus=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "8003a7b8dc4d329ea478d0fffc6f4b30958750f8",
+        "rev": "e4f91aa259213c8f1d58242a97a404744084ea9f",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
-        "ref": "master",
         "repo": "coyote-nix",
+        "rev": "e4f91aa259213c8f1d58242a97a404744084ea9f",
         "type": "github"
       }
     },
@@ -65,17 +65,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1788683827,
-        "narHash": "sha256-Mj0xsfz1APhnN3PhyiaAoClhmvjQ8yjVreUgeckqdZc=",
+        "lastModified": 1788694287,
+        "narHash": "sha256-7TokvT2dBJ2k2foOenO+Elw2zY+lbjbxJb7tNDSGbus=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "8003a7b8dc4d329ea478d0fffc6f4b30958750f8",
+        "rev": "e4f91aa259213c8f1d58242a97a404744084ea9f",
         "type": "github"
       },
       "original": {
         "owner": "TUM-DSE",
-        "ref": "master",
         "repo": "coyote-nix",
+        "rev": "e4f91aa259213c8f1d58242a97a404744084ea9f",
         "type": "github"
       }
     },
@@ -874,16 +874,17 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1788685096,
-        "narHash": "sha256-JBTlaL/GXtbYbm3n5DbJZUP2+RnR36wd7qxpMO61u8w=",
-        "ref": "master",
-        "rev": "568d03361495b0d78992e0bc080eb26e8a5e3040",
-        "revCount": 173,
+        "lastModified": 1788694380,
+        "narHash": "sha256-bzUZDrt5GQJOd42JY7BSJ55u7rlLhrRzKK5WoA4lMkM=",
+        "ref": "helios-u280-report-preflight",
+        "rev": "250b38fcd31810cfb3bff19f57c6b2ea5a8b489d",
+        "revCount": 116,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
       "original": {
-        "ref": "master",
+        "ref": "helios-u280-report-preflight",
+        "rev": "250b38fcd31810cfb3bff19f57c6b2ea5a8b489d",
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       }
