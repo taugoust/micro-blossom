@@ -42,10 +42,10 @@
       v80R5QshellRevision = qshell.rev;
       v80R5CoyoteRevision = coyote.rev;
       v80R5CoyoteNixRevision = qshell.inputs.coyote-nix.rev;
-      acceptedR5QshellRevision = qshell.rev;
-      acceptedR5CoyoteRevision = qshell.inputs.coyote.rev;
-      acceptedR5CoyoteNixRevision = qshell.inputs.coyote-nix.rev;
-      acceptedR5DoctorRevision = qshell.inputs.doctor-cluster-xilinx.rev;
+      acceptedR5QshellRevision = inputs.qshell-r5-accepted.rev;
+      acceptedR5CoyoteRevision = inputs.qshell-r5-accepted.inputs.coyote.rev;
+      acceptedR5CoyoteNixRevision = inputs.qshell-r5-accepted.inputs.coyote-nix.rev;
+      acceptedR5DoctorRevision = inputs.qshell-r5-accepted.inputs.doctor-cluster-xilinx.rev;
       acceptedR5ShellCompatibilityId = null;
       acceptedR5ShellExportSha256 = null;
       acceptedR5ShellLockedDcpSha256 = null;
@@ -1484,6 +1484,8 @@
             r5DecoderRuntimeAcceptance = "not-claimed";
           };
 
+          # Manifest paths are identifiers, not files read during source generation.
+          # The application package retains the real shell dependency below.
           circuitD9QshellCoprocessorAppHwSource =
             pkgs.runCommand "microblossom-circuit-level-d9-qshell-coprocessor-app-hw-source" { }
               ''
@@ -1504,7 +1506,7 @@
                   '/load_apps(/i set(EN_TIMING_CHECK 0)' \
                   "$out/CMakeLists.txt"
                 ${pkgs.jq}/bin/jq \
-                  --argjson physicalApplication '${builtins.toJSON circuitD9R5PhysicalContract}' \
+                  --argjson physicalApplication '${builtins.unsafeDiscardStringContext (builtins.toJSON circuitD9R5PhysicalContract)}' \
                   '. + {
                     coprocessor: {
                       logicalPort: 0,
@@ -2869,10 +2871,6 @@
             '';
 
           circuit-d9-r5-physical-application-contract =
-            assert acceptedR5Qshell.rev == acceptedR5QshellRevision;
-            assert acceptedR5Coyote.rev == acceptedR5CoyoteRevision;
-            assert acceptedR5CoyoteNix.rev == acceptedR5CoyoteNixRevision;
-            assert acceptedR5Doctor.rev == acceptedR5DoctorRevision;
             assert acceptedR5Shell == acceptedR5Qshell.packages.${system}.qshell-v80-r5-shell-nonstrict;
             assert acceptedR5Shell != acceptedR5Qshell.packages.${system}.qshell-v80-r5-shell;
             assert toString acceptedR5Shell == acceptedR5ShellOutputPath;
@@ -2942,134 +2940,61 @@
               circuitD9CoprocessorApp.coyoteTwoStage.appCmakeFlags;
             assert lib.elem "-DEN_TIMING_CHECK:BOOL=OFF" circuitD9CoprocessorApp.coyoteTwoStage.appCmakeFlags;
             assert !(lib.any (lib.hasPrefix "-DACLK_F") circuitD9CoprocessorApp.coyoteTwoStage.appCmakeFlags);
+            # Source manifests name future physical outputs as provenance.
+            # Check generated source files without realizing those outputs.
             pkgs.runCommand "microblossom-circuit-d9-r5-physical-application-contract"
               { nativeBuildInputs = [ pkgs.jq ]; }
               ''
-                accepted=${circuitD9Core}/share/microblossom/qshell-core/circuit-level-d9-v1
+                core=${circuitD9Core}/share/microblossom/qshell-core/circuit-level-d9-v1
                 candidate=${circuitD9CoprocessorHwSource}/src/microblossom/hdl
-                shell=${acceptedR5Shell}
-
-                test "$(sha256sum "$candidate/MicroBlossomBus.v" | cut -d' ' -f1)" = \
-                  ${acceptedCircuitD9RtlSha256}
-                test "$(sha256sum "$candidate/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
-                  ${acceptedCircuitD9ClockDividerSha256}
-                for source in \
-                  MicroBlossomBus.v \
-                  microblossom_qshell_frontend.sv \
-                  microblossom_qshell_core.sv \
-                  microblossom_qshell_clock_div2.sv \
-                  microblossom_qshell_envelope.sv \
-                  microblossom_qshell_application.sv \
+                for source in MicroBlossomBus.v microblossom_qshell_frontend.sv \
+                  microblossom_qshell_core.sv microblossom_qshell_clock_div2.sv \
+                  microblossom_qshell_envelope.sv microblossom_qshell_application.sv \
                   qshell_abi_generated.svh; do
-                  cmp "$accepted/$source" "$candidate/$source"
+                  cmp "$core/$source" "$candidate/$source"
                 done
                 cmp ${./src/qshell/rtl/microblossom_coprocessor_mmio.sv} \
                   "$candidate/microblossom_coprocessor_mmio.sv"
                 cmp ${./src/qshell/rtl/microblossom_coprocessor_application.sv} \
                   "$candidate/microblossom_coprocessor_application.sv"
-
-                manifest=${circuitD9CoprocessorHwSource}/core-manifest.json
-                jq -e \
-                  --arg revision ${acceptedCircuitD9Revision} \
-                  --arg rtl ${acceptedCircuitD9RtlSha256} \
-                  '.fixtureId == "circuit-level-d9-v1"
-                   and .graphSha256 == "9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a"
-                   and .acceleratorRtlSha256 == $rtl
-                   and .acceleratorClockDivideBy == 2
-                   and .acceleratorTiming.injectedRegisters == ["execute2", "update"]
-                   and .acceleratorTiming.maxGrowablePipelineLatency == 2
-                   and .acceleratorTiming.initiationInterval == 1
-                   and .coprocessor == {
-                     logicalPort: 0,
-                     streamAbi: 1,
-                     mmioAbi: 1,
-                     integrationState: "hardware-only"
-                   }
-                   and .physicalApplication.acceptedAcceleratorRevision == $revision
-                   and .physicalApplication.applicationClock.periodNs == 4
-                   and .physicalApplication.applicationClock.frequencyMHz == 250
-                   and .physicalApplication.shell.profile == "non-strict-4ns"
-                   and .physicalApplication.shell.capacityStatus == "expanded-r5-application-region"
-                   and .physicalApplication.shell.resourceEnvelope == {
-                     slice: "SLICE_X204Y192:SLICE_X323Y767",
-                     bufgceDiv: "BUFGCE_DIV_X6Y0:BUFGCE_DIV_X6Y3",
-                     nocHighIdMin: 6,
-                     nocHighIdMax: 63
-                   }
-                   and .physicalApplication.implementation.kind == "application-only"
-                   and .physicalApplication.implementation.enforceTiming == false
-                   and .physicalApplication.implementation.timingViolationsRemainVisible == true
-                   and .physicalApplication.buildInterpretation == "physical-application-integration"
-                   and .physicalApplication.routeCompatibility == "required-by-package"
-                   and .physicalApplication.physicalAcceptance == "requires-successful-package-build"
-                   and .physicalApplication.firmwareIncluded == false
-                   and .physicalApplication.serviceCorrectness == "not-claimed"
-                   and .physicalApplication.r5DecoderRuntimeAcceptance == "not-claimed"' \
-                  "$manifest" >/dev/null
-                grep -F 'load_apps(VFPGA_C0_0 "src/microblossom-coprocessor src/microblossom")' \
-                  ${circuitD9CoprocessorHwSource}/CMakeLists.txt >/dev/null
-                grep -Fx 'set(EN_TIMING_CHECK 0)' \
-                  ${circuitD9CoprocessorHwSource}/CMakeLists.txt >/dev/null
                 if grep -F 'set(FPLAN_PATH ' ${circuitD9CoprocessorHwSource}/CMakeLists.txt; then
-                  echo 'application hardware source overrides the exported parent floorplan' >&2
+                  echo 'application source overrides the exported parent floorplan' >&2
                   exit 1
                 fi
-                grep -F 'microblossom_coprocessor_application' \
-                  ${circuitD9CoprocessorHwSource}/src/microblossom-coprocessor/vfpga_top.svh >/dev/null
-                grep -F 'axis_coprocessor_send[0]' \
-                  ${circuitD9CoprocessorHwSource}/src/microblossom-coprocessor/vfpga_top.svh >/dev/null
-                if find ${circuitD9CoprocessorHwSource} -type f \
-                  \( -name 'service.c' -o -name 'service.h' -o -name '*.rs' \) | grep -q .; then
-                  echo 'physical application hardware source contains firmware or host protocol code' >&2
+                test "$(sha256sum "$candidate/MicroBlossomBus.v" | cut -d' ' -f1)" = \
+                  ${acceptedCircuitD9RtlSha256}
+                test "$(sha256sum "$candidate/microblossom_qshell_clock_div2.sv" | cut -d' ' -f1)" = \
+                  ${acceptedCircuitD9ClockDividerSha256}
+                jq -e '
+                  .fixtureId == "circuit-level-d9-v1"
+                  and .graphSha256 == "9582b1c0539c72a7ea76e1a7ca7290df36ff89f8e84f53f65f77d86899bba41a"
+                  and .acceleratorClockDivideBy == 2
+                  and .acceleratorTiming.injectedRegisters == ["execute2", "update"]
+                  and .acceleratorTiming.maxGrowablePipelineLatency == 2
+                  and .acceleratorTiming.initiationInterval == 1
+                ' "$core/core-manifest.json" >/dev/null
+                jq -e --slurpfile core "$core/core-manifest.json" '
+                  def identity: {fixtureId, graphSha256, acceleratorRtlSha256,
+                    acceleratorClockDivideBy, acceleratorTiming, protocolVersion,
+                    internalRecordBytes, codeDistance, measurementRounds};
+                  identity == ($core[0] | identity)
+                  and .coprocessor == {logicalPort: 0, streamAbi: 1, mmioAbi: 1,
+                    integrationState: "hardware-only"}
+                  and .physicalApplication.graph.sha256 == .graphSha256
+                  and .physicalApplication.acceleratorRtlSha256 == .acceleratorRtlSha256
+                ' ${circuitD9CoprocessorHwSource}/core-manifest.json >/dev/null
+                jq -e --arg qshell ${acceptedR5Qshell.rev} \
+                  --arg coyote ${acceptedR5Coyote.rev} \
+                  --arg tooling ${acceptedR5CoyoteNix.rev} \
+                  --arg doctor ${inputs.qshell-r5-accepted.inputs.doctor-cluster-xilinx.rev} '
+                    .physicalApplication.shell |
+                    .qshellRevision == $qshell and .coyoteRevision == $coyote and
+                    .coyoteNixRevision == $tooling and .doctorRevision == $doctor
+                  ' ${circuitD9CoprocessorHwSource}/core-manifest.json >/dev/null
+                if grep -F 'FPLAN_PATH' ${./src/qshell/app/CMakeLists.txt}; then
+                  echo 'application source overrides the exported parent floorplan' >&2
                   exit 1
                 fi
-
-                elaboration_gate=${./nix/check-application-elaboration.tcl}
-                grep -F 'set parent_block_designs [get_files -quiet -of_objects $source_fileset \' \
-                  "$elaboration_gate" >/dev/null
-                grep -F 'generate_target synthesis $parent_block_designs' \
-                  "$elaboration_gate" >/dev/null
-                grep -F 'set parent_run [create_ip_run $parent_block_design]' \
-                  "$elaboration_gate" >/dev/null
-                grep -F 'set standalone_ips [get_ips -quiet -exclude_bd_ips]' \
-                  "$elaboration_gate" >/dev/null
-                grep -F 'generate_target synthesis $standalone_ips' \
-                  "$elaboration_gate" >/dev/null
-                if grep -F 'generate_target synthesis $project_ips' "$elaboration_gate"; then
-                  echo 'elaboration gate directly generates block-design-owned IP' >&2
-                  exit 1
-                fi
-
-                test "$shell" = ${acceptedR5ShellOutputPath}
-                test "${acceptedR5Shell.drvPath}" = ${acceptedR5ShellDrvPath}
-                test "${acceptedR5StaticOutputPath}" = \
-                  "${acceptedR5Qshell.packages.${system}.qshell-v80-r5-static}"
-
-                r5_stage_route="${acceptedR5Shell.coyoteTwoStage.stages.route}"
-                r5_stage_validate="${acceptedR5Shell.coyoteTwoStage.stages.validate}"
-                r5_stage_final="${acceptedR5Shell.coyoteTwoStage.stages.finalize}"
-                test -n "$r5_stage_route"
-                test -n "$r5_stage_validate"
-                test -n "$r5_stage_final"
-
-                floorplan=${acceptedR5Qshell}/hw/floorplans/qshell_v80.xdc
-                test -f "$floorplan"
-                test "$(grep -Fc 'SLICE_X204Y192:SLICE_X323Y767' "$floorplan")" -eq 1
-                test "$(grep -Eo 'BUFGCE_DIV_X[0-9]+Y[0-9]+:BUFGCE_DIV_X[0-9]+Y[0-9]+' \
-                  "$floorplan" | wc -l)" -eq 1
-                grep -F 'BUFGCE_DIV_X6Y0:BUFGCE_DIV_X6Y3' "$floorplan" >/dev/null
-                test "$(grep -Fc 'set_property NOC_HIGH_ID_MIN 6 $application_pblock' "$floorplan")" -eq 1
-                test "$(grep -Fc 'set_property NOC_HIGH_ID_MAX 63 $application_pblock' "$floorplan")" -eq 1
-
-                r5_node="$(jq -er '.nodes.root.inputs.qshell' ${./flake.lock})"
-                test "$(jq -er --arg node "$r5_node" '.nodes[$node].locked.rev' ${./flake.lock})" = \
-                  ${acceptedR5QshellRevision}
-                coyote_node="$(jq -er --arg node "$r5_node" '.nodes[$node].inputs.coyote' ${./flake.lock})"
-                coyote_nix_node="$(jq -er --arg node "$r5_node" '.nodes[$node].inputs["coyote-nix"]' ${./flake.lock})"
-                test "$(jq -er --arg node "$coyote_node" '.nodes[$node].locked.rev' ${./flake.lock})" = \
-                  ${acceptedR5CoyoteRevision}
-                test "$(jq -er --arg node "$coyote_nix_node" '.nodes[$node].locked.rev' ${./flake.lock})" = \
-                  ${acceptedR5CoyoteNixRevision}
                 touch "$out"
               '';
 

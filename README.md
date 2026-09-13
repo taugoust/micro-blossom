@@ -156,6 +156,19 @@ Rust derivations use the locked GitHub release of Crane to vendor dependencies a
 
 The baseline accelerator does not require a RISC-V CPU. The optional VexRiscv-dependent Blinky demos remain in the repository but are excluded from the generator JAR and its dependency closure. The planned V80 CPU migration targets the card's hard Arm processing system.
 
+### Source checks and physical qualification
+
+Source checks must not build an FPGA merely to compare derivation paths. The R5
+application-source check verifies the generated files, immutable accelerator hashes,
+graph identity and parent-source provenance without realizing shell or routing outputs.
+Paths recorded in its source manifest are identifiers, not files read during generation;
+the actual application build still depends on its selected shell.
+
+Passing these checks is not physical or R5 runtime acceptance. In particular, a
+non-strict build or the legacy `physicalAcceptance` metadata label does not prove
+positive timing, clean routing/DRC, compatible partial reconfiguration or running firmware.
+The default checks still include explicitly named, potentially costly simulation tests.
+
 ## Usage
 
 Micro Blossom consists of two parts: the CPU program in Rust and the FPGA program in Scala.
