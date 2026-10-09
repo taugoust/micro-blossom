@@ -295,7 +295,7 @@ initial begin : test
     check_response(response, 0, 1'b0, 6'h15);
 
     // A wrong schema is discarded through tlast and does not poison the next record.
-    send_record(header(0, QSHELL_SCHEMA_HELIOS_PHENOM_SYNDROME, 1), command, 6'h16);
+    send_record(header(0, QSHELL_SCHEMA_OPAQUE_LOOPBACK, 1), command, 6'h16);
     repeat (3) @(posedge aclk);
     assert(!mbq_s_axis_tvalid && s_axis_tready)
         else $fatal(1, "schema rejection did not recover at record boundary");

@@ -18,8 +18,6 @@ pub mod flag {
 
 pub mod schema {
     pub const OPAQUE_LOOPBACK: u32 = 0x1;
-    pub const HELIOS_PHENOM_SYNDROME: u32 = 0x10001;
-    pub const HELIOS_SPARSE_CORRECTION: u32 = 0x10002;
     pub const MICROBLOSSOM_COMMAND: u32 = 0x20001;
     pub const MICROBLOSSOM_RESPONSE: u32 = 0x20002;
     pub const MICROBLOSSOM_DECODE_REQUEST: u32 = 0x20003;

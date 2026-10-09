@@ -19,11 +19,11 @@
     "coyote": {
       "flake": false,
       "locked": {
-        "lastModified": 1789337921,
-        "narHash": "sha256-OsQE2EmX659BV8ib1HkggVAgr1ymecyiEnIXcUd6TCE=",
+        "lastModified": 1791549004,
+        "narHash": "sha256-6Vnpq5OaQYhQTnKa67Ld+ycH5MylgkUyyiZQAEfVb9s=",
         "owner": "taugoust",
         "repo": "Coyote",
-        "rev": "4492d0419f85e286452b9c9e2f37c97d6a5e4b41",
+        "rev": "40746365cc19ad0e16be36df97443c0aaa24494a",
         "type": "github"
       },
       "original": {
@@ -50,11 +50,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789338581,
-        "narHash": "sha256-KnPSs8rcN6eeOum6Lepqoodl7Yojh0F4aw89/bNY5+0=",
+        "lastModified": 1791549690,
+        "narHash": "sha256-kXyd7MNZXu+jlej2GmHMGE6NrWGsIetQG7gkFh0iykU=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "04cf6225b2d6f2fa82eff3c1f201a71d5c00330d",
+        "rev": "329920f08d4cc755d7748bd4df2e5cf8f9f9e2a7",
         "type": "github"
       },
       "original": {
@@ -83,11 +83,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789338581,
-        "narHash": "sha256-KnPSs8rcN6eeOum6Lepqoodl7Yojh0F4aw89/bNY5+0=",
+        "lastModified": 1791549690,
+        "narHash": "sha256-kXyd7MNZXu+jlej2GmHMGE6NrWGsIetQG7gkFh0iykU=",
         "owner": "TUM-DSE",
         "repo": "coyote-nix",
-        "rev": "04cf6225b2d6f2fa82eff3c1f201a71d5c00330d",
+        "rev": "329920f08d4cc755d7748bd4df2e5cf8f9f9e2a7",
         "type": "github"
       },
       "original": {
@@ -967,11 +967,11 @@
         "xdb": "xdb"
       },
       "locked": {
-        "lastModified": 1789339081,
-        "narHash": "sha256-UmVW6/Y4xYMPBc/9hJV8jKUK4Y1oiqgh9FMOT0HxDf4=",
+        "lastModified": 1791554417,
+        "narHash": "sha256-Hrkq1JeGgy8KiA1+GAqLG6jb5bWRdgpqWN6IIoibZJI=",
         "ref": "master",
-        "rev": "969860697d67301b8f308194d1083c52e733425a",
-        "revCount": 176,
+        "rev": "488d67a14cc05921a95fb838b19a34b75223f717",
+        "revCount": 178,
         "type": "git",
         "url": "ssh://git@github.com/TUM-DSE/QShell.git"
       },
