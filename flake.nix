@@ -675,6 +675,7 @@
             cp "$core/microblossom_qshell_envelope.sv" "$hdl/"
             cp "$core/microblossom_qshell_application.sv" "$hdl/"
             cp "$core/qshell_abi_generated.svh" "$hdl/"
+            cp "$core/microblossom_schema.svh" "$hdl/"
             cp "$core/core-manifest.json" "$out/"
           '';
 
@@ -1023,6 +1024,7 @@
               cp "$core/microblossom_qshell_envelope.sv" "$hdl/"
               cp "$core/microblossom_qshell_application.sv" "$hdl/"
               cp "$core/qshell_abi_generated.svh" "$hdl/"
+              cp "$core/microblossom_schema.svh" "$hdl/"
               cp "$core/core-manifest.json" "$out/"
             '';
 
