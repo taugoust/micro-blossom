@@ -1,5 +1,6 @@
 #include "provider.h"
 #include "qshell_abi_generated.h"
+#include "microblossom_schema.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -27,12 +28,12 @@ static uint32_t get32(const uint8_t*p){return (uint32_t)p[0]|((uint32_t)p[1]<<8)
 int main(void){
  static const uint8_t graph[32]={0x4b,0x07,0x8d,0x3b,0x6c,0x6d,0xb2,0x4e,0xa9,0x72,0x64,0x14,0x56,0x9a,0x97,0xb3,0x89,0x9b,0xe4,0xe5,0x32,0xbe,0x1c,0x0e,0xbd,0x84,0xb5,0xfa,0x87,0x53,0x16,0xc5};
  uint8_t packet[QSHELL_HEADER_BYTES+48u]={0},response[QSHELL_HEADER_BYTES+48u]={0};uint16_t edges[2]={0},count=0,ops=0;
- put32(packet+QSHELL_OFFSET_MAGIC,QSHELL_MAGIC);packet[QSHELL_OFFSET_ABI_VERSION]=QSHELL_ABI_VERSION;packet[QSHELL_OFFSET_RECORD_CLASS]=QSHELL_CLASS_SYNDROME;put16(packet+QSHELL_OFFSET_FLAGS,QSHELL_FLAG_END_OF_ROUND);put16(packet+QSHELL_OFFSET_HEADER_BYTES,QSHELL_HEADER_BYTES);put32(packet+QSHELL_OFFSET_PAYLOAD_BYTES,48u);put32(packet+QSHELL_OFFSET_SCHEMA_ID,QSHELL_SCHEMA_MICROBLOSSOM_DECODE_REQUEST);put32(packet+QSHELL_OFFSET_SOURCE_ENDPOINT_ID,7);put32(packet+QSHELL_OFFSET_DESTINATION_ENDPOINT_ID,9);put32(packet+QSHELL_HEADER_BYTES,0x314a424d);put16(packet+QSHELL_HEADER_BYTES+4u,1);put16(packet+QSHELL_HEADER_BYTES+6u,1);memcpy(packet+QSHELL_HEADER_BYTES+8u,graph,32);put16(packet+QSHELL_HEADER_BYTES+40u,0);
+ put32(packet+QSHELL_OFFSET_MAGIC,QSHELL_MAGIC);packet[QSHELL_OFFSET_ABI_VERSION]=QSHELL_ABI_VERSION;packet[QSHELL_OFFSET_RECORD_CLASS]=QSHELL_CLASS_SYNDROME;put16(packet+QSHELL_OFFSET_FLAGS,QSHELL_FLAG_END_OF_ROUND);put16(packet+QSHELL_OFFSET_HEADER_BYTES,QSHELL_HEADER_BYTES);put32(packet+QSHELL_OFFSET_PAYLOAD_BYTES,48u);put32(packet+QSHELL_OFFSET_SCHEMA_ID,MICROBLOSSOM_SCHEMA_DECODE_REQUEST);put32(packet+QSHELL_OFFSET_SOURCE_ENDPOINT_ID,7);put32(packet+QSHELL_OFFSET_DESTINATION_ENDPOINT_ID,9);put32(packet+QSHELL_HEADER_BYTES,0x314a424d);put16(packet+QSHELL_HEADER_BYTES+4u,1);put16(packet+QSHELL_HEADER_BYTES+6u,1);memcpy(packet+QSHELL_HEADER_BYTES+8u,graph,32);put16(packet+QSHELL_HEADER_BYTES+40u,0);
  assert(microblossom_service_decode((cyt_provider*)1,packet,sizeof(packet),edges,&count,&ops)==0);assert(count==1&&edges[0]==2);assert(reads==4&&writes==6);
  microblossom_service_make_response(packet,response,0,edges,count,ops);
- assert(response[QSHELL_OFFSET_RECORD_CLASS]==QSHELL_CLASS_CORRECTION&&get32(response+QSHELL_OFFSET_SCHEMA_ID)==QSHELL_SCHEMA_MICROBLOSSOM_DECODE_RESULT&&get32(response+QSHELL_OFFSET_SOURCE_ENDPOINT_ID)==9&&get32(response+QSHELL_OFFSET_DESTINATION_ENDPOINT_ID)==7);
+ assert(response[QSHELL_OFFSET_RECORD_CLASS]==QSHELL_CLASS_CORRECTION&&get32(response+QSHELL_OFFSET_SCHEMA_ID)==MICROBLOSSOM_SCHEMA_DECODE_RESULT&&get32(response+QSHELL_OFFSET_SOURCE_ENDPOINT_ID)==9&&get32(response+QSHELL_OFFSET_DESTINATION_ENDPOINT_ID)==7);
  assert(response[QSHELL_HEADER_BYTES]=='M'&&response[QSHELL_HEADER_BYTES+1u]=='B'&&response[QSHELL_HEADER_BYTES+2u]=='R'&&response[QSHELL_HEADER_BYTES+3u]=='1');
  assert(response[QSHELL_HEADER_BYTES+40u]==1&&response[QSHELL_HEADER_BYTES+42u]==10&&response[QSHELL_HEADER_BYTES+44u]==2);
- put32(packet+QSHELL_OFFSET_SCHEMA_ID,QSHELL_SCHEMA_MICROBLOSSOM_DECODE_RESULT);assert(microblossom_service_decode((cyt_provider*)1,packet,sizeof(packet),edges,&count,&ops)==1);put32(packet+QSHELL_OFFSET_SCHEMA_ID,QSHELL_SCHEMA_MICROBLOSSOM_DECODE_REQUEST);
+ put32(packet+QSHELL_OFFSET_SCHEMA_ID,MICROBLOSSOM_SCHEMA_DECODE_RESULT);assert(microblossom_service_decode((cyt_provider*)1,packet,sizeof(packet),edges,&count,&ops)==1);put32(packet+QSHELL_OFFSET_SCHEMA_ID,MICROBLOSSOM_SCHEMA_DECODE_REQUEST);
  puts("MICROBLOSSOM_R5_SERVICE_PASS");return 0;
 }

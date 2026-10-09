@@ -3,6 +3,7 @@
 module tb_application;
 
 `include "qshell_abi_generated.svh"
+`include "microblossom_schema.svh"
 
 localparam logic [255:0] GRAPH_ID =
     256'hc5165387fab584bd0e1cbe32e5e49b89b3979a56146472a94eb26d6c3b8d074b;
@@ -50,7 +51,7 @@ function automatic logic [383:0] qshell_header(
         value[QSHELL_CONTEXT_ID_LSB +: QSHELL_CONTEXT_ID_W] = 32'd7;
         value[QSHELL_ROUND_ID_LSB +: QSHELL_ROUND_ID_W] = 32'd42;
         value[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] =
-            QSHELL_SCHEMA_MICROBLOSSOM_COMMAND;
+            MICROBLOSSOM_SCHEMA_COMMAND;
         value[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W] =
             SOURCE_ENDPOINT;
         value[QSHELL_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_DESTINATION_ENDPOINT_ID_W] =
@@ -139,7 +140,7 @@ task automatic receive_record(
                QSHELL_CLASS_CORRECTION)
             else $fatal(1, "response class is not correction");
         assert(m_axis_tdata[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] ==
-               QSHELL_SCHEMA_MICROBLOSSOM_RESPONSE)
+               MICROBLOSSOM_SCHEMA_RESPONSE)
             else $fatal(1, "response schema mismatch");
         assert(m_axis_tdata[QSHELL_FLAGS_LSB +: QSHELL_FLAGS_W] ==
                (expected_eor ? QSHELL_FLAG_END_OF_ROUND : 16'd0))

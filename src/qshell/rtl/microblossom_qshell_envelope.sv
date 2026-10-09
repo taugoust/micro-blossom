@@ -44,6 +44,7 @@ module microblossom_qshell_envelope #(
 );
 
 `include "qshell_abi_generated.svh"
+`include "microblossom_schema.svh"
 
 localparam logic [7:0] MBQ_OP_END_JOB = 8'h04;
 localparam logic [7:0] MBQ_OP_COMPLETION = 8'h84;
@@ -95,7 +96,7 @@ function automatic logic first_beat_valid(input logic [511:0] data);
             data[QSHELL_RESERVED_LSB +: QSHELL_RESERVED_W] == 0 &&
             data[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] == 32'd64 &&
             data[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] ==
-                QSHELL_SCHEMA_MICROBLOSSOM_COMMAND;
+                MICROBLOSSOM_SCHEMA_COMMAND;
     end
 endfunction
 
@@ -121,7 +122,7 @@ function automatic logic [383:0] make_response_header(
             end_of_round ? QSHELL_FLAG_END_OF_ROUND : 16'd0;
         value[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] = 32'd64;
         value[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] =
-            QSHELL_SCHEMA_MICROBLOSSOM_RESPONSE;
+            MICROBLOSSOM_SCHEMA_RESPONSE;
         value[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W] =
             destination_endpoint;
         value[QSHELL_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_DESTINATION_ENDPOINT_ID_W] =

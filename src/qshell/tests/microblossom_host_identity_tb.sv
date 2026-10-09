@@ -20,6 +20,7 @@ module rendered_host(input logic aclk, aresetn,
 endmodule
 module tb_host_identity;
  `include "qshell_abi_generated.svh"
+ `include "microblossom_schema.svh"
  logic aclk=0, aresetn=0;
  host_axis rx[1](), tx[1]();
  rendered_host dut(aclk, aresetn, rx, tx);
@@ -36,7 +37,7 @@ module tb_host_identity;
   h[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W]=64;
   h[QSHELL_CONTEXT_ID_LSB +: QSHELL_CONTEXT_ID_W]=7;
   h[QSHELL_ROUND_ID_LSB +: QSHELL_ROUND_ID_W]=42;
-  h[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W]=QSHELL_SCHEMA_MICROBLOSSOM_COMMAND;
+  h[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W]=MICROBLOSSOM_SCHEMA_COMMAND;
   h[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W]=18;
   h[QSHELL_DESTINATION_ENDPOINT_ID_LSB +: QSHELL_DESTINATION_ENDPOINT_ID_W]=257;
   h[QSHELL_RECORD_SEQUENCE_LSB +: QSHELL_RECORD_SEQUENCE_W]=seqno;
@@ -64,7 +65,7 @@ module tb_host_identity;
   logic [511:0] record;
   while(!tx[0].tvalid) @(negedge aclk);
   assert(tx[0].tkeep=='1 && !tx[0].tlast && tx[0].tid==5) else $fatal(1,"first beat framing");
-  assert(tx[0].tdata[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W]==QSHELL_SCHEMA_MICROBLOSSOM_RESPONSE)
+  assert(tx[0].tdata[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W]==MICROBLOSSOM_SCHEMA_RESPONSE)
    else $fatal(1,"response schema");
   prefix=tx[0].tdata[511:384];
   @(posedge aclk); @(negedge aclk);

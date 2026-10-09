@@ -288,8 +288,9 @@
                 mkdir -p "$out/bin" "$contract/src/bin"
                 install -m755 target/release/microblossom_d3_coprocessor "$out/bin/"
                 cp Cargo.toml Cargo.lock "$contract/"
-                cp src/lib.rs src/qshell_abi_generated.rs "$contract/src/"
+                cp src/lib.rs src/qshell_abi_generated.rs src/microblossom_schema.rs "$contract/src/"
                 cp src/bin/microblossom_d3_coprocessor.rs "$contract/src/bin/"
+                cp ${./src/qshell/protocol/wire-fixture.json} "$contract/"
                 cp ${./src/qshell/README.md} "$contract/README.md"
               '';
 
@@ -602,6 +603,8 @@
                   "$core/microblossom_qshell_application.sv"
                 cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
                   "$core/qshell_abi_generated.svh"
+                cp ${./src/qshell/rtl/microblossom_schema.svh} \
+                  "$core/microblossom_schema.svh"
                 cp ${./src/qshell/README.md} "$core/protocol.md"
 
                 jq -n \
@@ -614,6 +617,7 @@
                   --arg envelopeSha256 "$(sha256sum "$core/microblossom_qshell_envelope.sv" | cut -d' ' -f1)" \
                   --arg applicationSha256 "$(sha256sum "$core/microblossom_qshell_application.sv" | cut -d' ' -f1)" \
                   --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
+                  --arg microblossomSchemaSha256 "$(sha256sum "$core/microblossom_schema.svh" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
                   '{
                     schemaVersion: 1,
@@ -647,7 +651,8 @@
                     timingConstraintsSha256: $timingConstraintsSha256,
                     envelopeSha256: $envelopeSha256,
                     applicationSha256: $applicationSha256,
-                    qshellAbiSha256: $qshellAbiSha256
+                    qshellAbiSha256: $qshellAbiSha256,
+                    microblossomSchemaSha256: $microblossomSchemaSha256
                   }' > "$core/core-manifest.json"
               '';
 
@@ -952,6 +957,8 @@
                   "$core/microblossom_qshell_application.sv"
                 cp ${qshellAbiSource}/src/abi/hdl/qshell_abi_generated.svh \
                   "$core/qshell_abi_generated.svh"
+                cp ${./src/qshell/rtl/microblossom_schema.svh} \
+                  "$core/microblossom_schema.svh"
                 cp ${./src/qshell/README.md} "$core/protocol.md"
 
                 jq -n \
@@ -963,6 +970,8 @@
                   --argjson measurementRounds '${builtins.toJSON spec.measurementRounds}' \
                   --arg graphSha256 ${spec.graphSha256} \
                   --arg acceleratorRtlSha256 "$(sha256sum "$core/MicroBlossomBus.v" | cut -d' ' -f1)" \
+                  --arg qshellAbiSha256 "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" \
+                  --arg microblossomSchemaSha256 "$(sha256sum "$core/microblossom_schema.svh" | cut -d' ' -f1)" \
                   --arg qshellRevision '${qshell.rev}' \
                   --argjson acceleratorTiming '${builtins.toJSON timing}' \
                   '{
@@ -990,7 +999,9 @@
                     outerQshellResponseBeats: 2,
                     qshellRevision: $qshellRevision,
                     graphSha256: $graphSha256,
-                    acceleratorRtlSha256: $acceleratorRtlSha256
+                    acceleratorRtlSha256: $acceleratorRtlSha256,
+                    qshellAbiSha256: $qshellAbiSha256,
+                    microblossomSchemaSha256: $microblossomSchemaSha256
                   }' > "$core/core-manifest.json"
               '';
 
@@ -1306,6 +1317,7 @@
             ./src/cpu/r5-service/linker.ld
             ./src/cpu/r5-service/service.c
             ./src/cpu/r5-service/qshell_abi_generated.h
+            ./src/cpu/r5-service/microblossom_schema.h
             ./src/cpu/r5-service/startup.S
             "${coyote}/sw/firmware/coprocessor/provider.c"
             "${coyote}/sw/firmware/coprocessor/provider.h"
@@ -1633,7 +1645,7 @@
               }
               ''
                 mkdir -p "$out/metadata" "$out/packages"
-                python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                PYTHONPATH=${./src/qshell/host}:$PYTHONPATH python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
                   --template ${coprocessorContractTemplate} \
                   --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
                   --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
@@ -2482,6 +2494,10 @@
                 diff -u ${./src/qshell/protocol/src/qshell_abi_generated.rs} generated.rs
                 diff -u ${./src/cpu/r5-service/qshell_abi_generated.h} generated.h
                 diff -u ${./src/qshell/host/qshell_abi_generated.py} generated.py
+                if grep -n -E 'pub const (MICROBLOSSOM|QUEKUF)|QSHELL_SCHEMA_(MICROBLOSSOM|QUEKUF)|SCHEMA_(MICROBLOSSOM|QUEKUF)' generated.rs generated.h generated.py; then
+                  echo 'QShell ABI generator emitted a consumer-owned schema' >&2
+                  exit 1
+                fi
                 if grep -n -E \
                     '#define QSHELL_(MAGIC|ABI|HEADER_BYTES|CLASS|FLAG|.*SCHEMA)' \
                     ${./src/cpu/r5-service/service.c}; then
@@ -2495,9 +2511,9 @@
                   echo "host bridge contains a hand-written QSH2 definition" >&2
                   exit 1
                 fi
-                python3 ${./src/qshell/tools/check_qshell_wire_fixture.py} \
+                PYTHONPATH=${./src/qshell/host}:$PYTHONPATH python3 ${./src/qshell/tools/check_qshell_wire_fixture.py} \
                   --spec ${qshellContractSource}/abi/qshell-abi.json \
-                  --fixtures ${qshellContractSource}/abi/golden-fixtures.json
+                  --fixtures ${./src/qshell/protocol/wire-fixture.json}
                 touch "$out"
               '';
           qshell-coprocessor-mmio =
@@ -2547,7 +2563,7 @@
                  "shell":{"compatibilityId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
                 EOF
                 printf '%s\n' "$runtime_identity" > runtime-identity
-                python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
+                PYTHONPATH=${./src/qshell/host}:$PYTHONPATH python3 ${./src/qshell/tools/build_coprocessor_bundle.py} \
                   --template "$contract" \
                   --schema ${qshellContractSource}/contracts/decoder-contract.schema.json \
                   --abi-spec ${qshellContractSource}/abi/qshell-abi.json \
@@ -2558,10 +2574,8 @@
                   --coyote-revision ${v80R5CoyoteRevision} \
                   --coyote-nix-revision ${v80R5CoyoteNixRevision} \
                   --implementation-revision ${self.rev or "3f53ba16ed0528dfa31944919f2ff6e15e5fe1f2"}
-                test "$(jq -er '.syndrome_interface.schema_id' generated/decoder-contract.json)" = \
-                  ${toString qshellAbiSpec.schemas.microblossom_decode_request}
-                test "$(jq -er '.correction_interface.schema_id' generated/decoder-contract.json)" = \
-                  ${toString qshellAbiSpec.schemas.microblossom_decode_result}
+                test "$(jq -er '.syndrome_interface.schema_id' generated/decoder-contract.json)" = 131075
+                test "$(jq -er '.correction_interface.schema_id' generated/decoder-contract.json)" = 131076
                 test "$(jq -er '.provenance.record_abi' generated/decoder-contract.json)" = \
                   ${toString qshellAbiSpec.version}
                 test "$(jq -er '.auxiliary.coprocessor.firmware_abi' generated/decoder-contract.json)" = \
@@ -2655,13 +2669,14 @@
                   ${v80R5QshellRevision}
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
-                  -I"$abi" \
+                  -I"$abi" -I${./src/qshell/rtl} \
                   --top-module tb_envelope \
                   ${./src/qshell/rtl/microblossom_qshell_envelope.sv} \
                   ${./src/qshell/tests/microblossom_qshell_envelope_tb.sv}
                 ./obj_dir/Vtb_envelope 2>&1 | tee "$out/test.log"
                 grep -F 'MICROBLOSSOM_QSHELL_ENVELOPE_PASS' "$out/test.log" >/dev/null
                 cp "$abi/qshell_abi_generated.svh" "$out/"
+                cp ${./src/qshell/rtl/microblossom_schema.svh} "$out/"
                 verilator --version > "$out/verilator-version.txt"
               '';
 
@@ -2788,6 +2803,7 @@
                 test ! -e "$app/microblossom_qshell_application.sv"
                 for source in \
                   MicroBlossomBus.v \
+                  microblossom_schema.svh \
                   microblossom_qshell_frontend.sv \
                   microblossom_qshell_core.sv \
                   microblossom_qshell_clock_div2.sv \
@@ -3052,6 +3068,8 @@
                   "$(jq -er '.applicationSha256' "$core/core-manifest.json")"
                 test "$(sha256sum "$core/qshell_abi_generated.svh" | cut -d' ' -f1)" = \
                   "$(jq -er '.qshellAbiSha256' "$core/core-manifest.json")"
+                test "$(sha256sum "$core/microblossom_schema.svh" | cut -d' ' -f1)" = \
+                  "$(jq -er '.microblossomSchemaSha256' "$core/core-manifest.json")"
                 mkdir -p "$out"
                 verilator --binary --timing --assert -Wno-fatal \
                   --top-module tb_core \

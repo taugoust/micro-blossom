@@ -1,6 +1,7 @@
 #include "provider.h"
 #include "provider_platform.h"
 #include "qshell_abi_generated.h"
+#include "microblossom_schema.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -98,7 +99,7 @@ uint16_t microblossom_service_decode(cyt_provider *provider, const uint8_t *pack
         load16(packet + QSHELL_OFFSET_FLAGS) != QSHELL_FLAG_END_OF_ROUND ||
         load16(packet + QSHELL_OFFSET_HEADER_BYTES) != QSHELL_HEADER_BYTES ||
         load32(packet + QSHELL_OFFSET_PAYLOAD_BYTES) != DECODE_PAYLOAD_BYTES ||
-        load32(packet + QSHELL_OFFSET_SCHEMA_ID) != QSHELL_SCHEMA_MICROBLOSSOM_DECODE_REQUEST ||
+        load32(packet + QSHELL_OFFSET_SCHEMA_ID) != MICROBLOSSOM_SCHEMA_DECODE_REQUEST ||
         load32(packet + QSHELL_HEADER_BYTES) != REQUEST_MAGIC ||
         load16(packet + QSHELL_HEADER_BYTES + 4u) != SERVICE_VERSION ||
         !equal_bytes(packet + QSHELL_HEADER_BYTES + 8u, graph_identity, 32u)) return 1u;
@@ -145,7 +146,7 @@ void microblossom_service_make_response(const uint8_t *input, uint8_t *output,
     copy_bytes(output,input,QSHELL_HEADER_BYTES);
     output[QSHELL_OFFSET_RECORD_CLASS]=QSHELL_CLASS_CORRECTION;
     store32(output + QSHELL_OFFSET_PAYLOAD_BYTES,DECODE_PAYLOAD_BYTES);
-    store32(output + QSHELL_OFFSET_SCHEMA_ID,QSHELL_SCHEMA_MICROBLOSSOM_DECODE_RESULT);
+    store32(output + QSHELL_OFFSET_SCHEMA_ID,MICROBLOSSOM_SCHEMA_DECODE_RESULT);
     store32(output + QSHELL_OFFSET_SOURCE_ENDPOINT_ID,
             load32(input + QSHELL_OFFSET_DESTINATION_ENDPOINT_ID));
     store32(output + QSHELL_OFFSET_DESTINATION_ENDPOINT_ID,

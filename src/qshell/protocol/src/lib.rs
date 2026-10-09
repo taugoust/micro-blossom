@@ -3,6 +3,7 @@
 use core::fmt;
 
 pub mod qshell_abi_generated;
+pub mod microblossom_schema;
 
 use qshell_abi_generated as qshell_abi;
 
@@ -663,7 +664,7 @@ impl<Link: BeatLink> QshellRecordLink<Link> {
         put_u32(
             &mut first.data,
             qshell_abi::offset::SCHEMA_ID,
-            qshell_abi::schema::MICROBLOSSOM_COMMAND,
+            microblossom_schema::COMMAND,
         );
         put_u32(
             &mut first.data,
@@ -735,7 +736,7 @@ impl<Link: BeatLink> QshellRecordLink<Link> {
         if get_u32(&first.data, qshell_abi::offset::CONTEXT_ID) != self.route.context_id
             || get_u32(&first.data, qshell_abi::offset::ROUND_ID) != self.round_id
             || get_u32(&first.data, qshell_abi::offset::SCHEMA_ID)
-                != qshell_abi::schema::MICROBLOSSOM_RESPONSE
+                != microblossom_schema::RESPONSE
             || get_u32(&first.data, qshell_abi::offset::DESTINATION_ENDPOINT_ID)
                 != self.route.source_endpoint_id
             || get_u32(&first.data, qshell_abi::offset::ROUTE_CAPABILITY_ID)
@@ -1238,7 +1239,7 @@ impl<Link: BeatLink> CoprocessorQshellLink<Link> {
         put_u32(
             &mut first.data,
             qshell_abi::offset::SCHEMA_ID,
-            qshell_abi::schema::MICROBLOSSOM_DECODE_REQUEST,
+            microblossom_schema::DECODE_REQUEST,
         );
         put_u32(
             &mut first.data,
@@ -1277,7 +1278,7 @@ impl<Link: BeatLink> CoprocessorQshellLink<Link> {
             || first.data[qshell_abi::offset::ABI_VERSION] != qshell_abi::VERSION as u8
             || first.data[qshell_abi::offset::RECORD_CLASS] != qshell_abi::record_class::CORRECTION
             || get_u32(&first.data, qshell_abi::offset::SCHEMA_ID)
-                != qshell_abi::schema::MICROBLOSSOM_DECODE_RESULT
+                != microblossom_schema::DECODE_RESULT
             || get_u32(&first.data, qshell_abi::offset::CONTEXT_ID) != self.route.context_id
             || get_u32(&first.data, qshell_abi::offset::ROUND_ID) != self.round_id
             || get_u32(&first.data, qshell_abi::offset::SOURCE_ENDPOINT_ID)
@@ -1561,7 +1562,7 @@ mod tests {
         put_u32(
             &mut first.data,
             qshell_abi::offset::SCHEMA_ID,
-            qshell_abi::schema::MICROBLOSSOM_RESPONSE,
+            microblossom_schema::RESPONSE,
         );
         put_u32(
             &mut first.data,
@@ -1617,7 +1618,7 @@ mod tests {
         put_u32(
             &mut first.data,
             qshell_abi::offset::SCHEMA_ID,
-            qshell_abi::schema::ERROR,
+            0xffff_0002,
         );
         let payload = &mut first.data[qshell_abi::HEADER_BYTES..];
         payload[0..2].copy_from_slice(&code.to_le_bytes());
@@ -1649,7 +1650,7 @@ mod tests {
         );
         assert_eq!(
             get_u32(&first.data, qshell_abi::offset::SCHEMA_ID),
-            qshell_abi::schema::MICROBLOSSOM_COMMAND
+            microblossom_schema::COMMAND
         );
         assert_eq!(get_u32(&first.data, qshell_abi::offset::ROUTE_VERSION), 0);
         assert_eq!(&first.data[qshell_abi::HEADER_BYTES..], &begin[..16]);
@@ -1787,7 +1788,7 @@ mod tests {
         put_u32(
             &mut first.data,
             qshell_abi::offset::SCHEMA_ID,
-            qshell_abi::schema::MICROBLOSSOM_DECODE_RESULT,
+            microblossom_schema::DECODE_RESULT,
         );
         put_u32(
             &mut first.data,
@@ -1832,7 +1833,7 @@ mod tests {
         assert_eq!(link.link.sent.len(), 2);
         assert_eq!(
             get_u32(&link.link.sent[0].data, qshell_abi::offset::SCHEMA_ID),
-            qshell_abi::schema::MICROBLOSSOM_DECODE_REQUEST
+            microblossom_schema::DECODE_REQUEST
         );
     }
 

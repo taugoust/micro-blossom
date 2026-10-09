@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate MicroBlossom language bindings from QShell's current ABI spec."""
+"""Generate MicroBlossom bindings for the QShell-owned common record ABI."""
 
 import argparse
 import json
@@ -36,6 +36,8 @@ def generate_rust(spec: dict[str, object]) -> str:
     ):
         lines.append(f"pub mod {module} {{")
         for name, value in spec[group].items():
+            if group == "schemas" and name.startswith(("microblossom_", "quekuf_")):
+                continue
             lines.append(f"    pub const {upper(name)}: {rust_type} = 0x{value:x};")
         lines.extend(["}", ""])
     lines.append("pub mod offset {")
@@ -69,6 +71,8 @@ def generate_c(spec: dict[str, object]) -> str:
         ("error_codes", "QSHELL_ERROR", "UINT16_C"),
     ):
         for name, value in spec[group].items():
+            if group == "schemas" and name.startswith(("microblossom_", "quekuf_")):
+                continue
             lines.append(f"#define {prefix}_{upper(name)} {macro}(0x{value:x})")
         lines.append("")
     for field in spec["fields"]:
@@ -98,6 +102,8 @@ def generate_python(spec: dict[str, object]) -> str:
         ("error_codes", "ERROR"),
     ):
         for name, value in spec[group].items():
+            if group == "schemas" and name.startswith(("microblossom_", "quekuf_")):
+                continue
             lines.append(f"{prefix}_{upper(name)} = 0x{value:x}")
         lines.append("")
     for field in spec["fields"]:

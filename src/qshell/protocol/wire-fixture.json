@@ -1,0 +1,18 @@
+{
+  "fixtures": [
+    {
+      "name": "microblossom-command",
+      "record_class": "syndrome",
+      "flags": [],
+      "context_id": 7,
+      "round_id": 42,
+      "schema_id": "microblossom_command",
+      "source_endpoint_id": 18,
+      "destination_endpoint_id": 0,
+      "route_capability_id": 2271560481,
+      "route_version": 0,
+      "record_sequence": 3,
+      "payload_hex": "4d4251310102030044332211887766554b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c508070605040302011817161514131211"
+    }
+  ]
+}

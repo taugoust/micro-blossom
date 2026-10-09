@@ -4,9 +4,12 @@
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parents[1] / "host"))
 import jsonschema
+import microblossom_schema
 
 GRAPH_SHA256 = "4b078d3b6c6db24ea9726414569a97b3899be4e532be1c0ebd84b5fa875316c5"
 
@@ -41,8 +44,8 @@ def main() -> None:
     schema = json.loads(args.schema.read_text())
     abi_spec = json.loads(args.abi_spec.read_text())
     record_abi = abi_spec["version"]
-    request_schema = abi_spec["schemas"]["microblossom_decode_request"]
-    result_schema = abi_spec["schemas"]["microblossom_decode_result"]
+    request_schema = microblossom_schema.SCHEMA_DECODE_REQUEST
+    result_schema = microblossom_schema.SCHEMA_DECODE_RESULT
     contract["syndrome_interface"]["schema_id"] = request_schema
     contract["correction_interface"]["schema_id"] = result_schema
     contract["provenance"]["record_abi"] = record_abi

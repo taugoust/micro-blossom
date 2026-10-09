@@ -3,6 +3,7 @@
 module tb_envelope;
 
 `include "qshell_abi_generated.svh"
+`include "microblossom_schema.svh"
 
 localparam logic [31:0] CONTEXT_ID = 32'h0000_0007;
 localparam logic [31:0] ROUND_ID = 32'h0000_002a;
@@ -195,7 +196,7 @@ task automatic check_response(
         assert(m_axis_tdata[QSHELL_PAYLOAD_BYTES_LSB +: QSHELL_PAYLOAD_BYTES_W] == 64)
             else $fatal(1, "bad response payload size");
         assert(m_axis_tdata[QSHELL_SCHEMA_ID_LSB +: QSHELL_SCHEMA_ID_W] ==
-               QSHELL_SCHEMA_MICROBLOSSOM_RESPONSE)
+               MICROBLOSSOM_SCHEMA_RESPONSE)
             else $fatal(1, "bad response schema");
         assert(m_axis_tdata[QSHELL_SOURCE_ENDPOINT_ID_LSB +: QSHELL_SOURCE_ENDPOINT_ID_W] ==
                DECODER_ENDPOINT &&
@@ -245,14 +246,14 @@ initial begin : test
 
     // Successful writes produce no MBQ1 response; readiness is the completion signal.
     command = mbq_record(8'h02, 0, 64'h1122_3344_5566_7788);
-    send_record(header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 0), command, 6'h11);
+    send_record(header(0, MICROBLOSSOM_SCHEMA_COMMAND, 0), command, 6'h11);
     accept_mbq(command, 6'h11);
     finish_without_response();
     assert(!m_axis_tvalid) else $fatal(1, "write unexpectedly produced an envelope");
 
     // A read result is wrapped in two beats and begins correction sequence zero.
     command = mbq_record(8'h03, 1, 64'h8);
-    send_record(header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 1), command, 6'h12);
+    send_record(header(0, MICROBLOSSOM_SCHEMA_COMMAND, 1), command, 6'h12);
     accept_mbq(command, 6'h12);
     assert(!s_axis_tready) else $fatal(1, "adapter accepted another command while one was active");
     response = mbq_record(8'h83, 1, 64'h2401_23c0);
@@ -263,7 +264,7 @@ initial begin : test
     command = mbq_record(8'h04, 2, 64'd0);
     send_record(
         header(QSHELL_FLAG_END_OF_ROUND,
-               QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 2),
+               MICROBLOSSOM_SCHEMA_COMMAND, 2),
         command,
         6'h13
     );
@@ -279,7 +280,7 @@ initial begin : test
     begin
         logic [511:0] first;
         first = '0;
-        first[383:0] = header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 0);
+        first[383:0] = header(0, MICROBLOSSOM_SCHEMA_COMMAND, 0);
         first[511:384] = command[127:0];
         send_beat(first, '1, 1'b0, 6'h14);
     end
@@ -288,7 +289,7 @@ initial begin : test
     assert(!mbq_s_axis_tvalid) else $fatal(1, "malformed record reached MBQ1 core");
 
     // Recovery after discard starts a new correction sequence after completion.
-    send_record(header(0, QSHELL_SCHEMA_MICROBLOSSOM_COMMAND, 0), command, 6'h15);
+    send_record(header(0, MICROBLOSSOM_SCHEMA_COMMAND, 0), command, 6'h15);
     accept_mbq(command, 6'h15);
     response = mbq_record(8'h83, 0, 64'hfeed_face);
     return_mbq(response, 6'h15);
